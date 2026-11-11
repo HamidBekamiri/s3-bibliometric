@@ -1,0 +1,113 @@
+# S3 Bibliometric
+
+**Semantic Similarity Score (S3): a bibliometric method for mapping intellectual
+structures**, packaged as a free Python library and an MCP server that LLM assistants
+(Claude, and any other MCP client) can call.
+
+Give it a Scopus export. It finds the research communities of the field, their central
+papers, outliers, and the citation flows between communities. Your AI assistant can then
+label the communities and write up the intellectual structure.
+
+## How S3 works
+
+1. Embed each paper's `Title. Abstract` with `sentence-transformers/all-mpnet-base-v2`
+2. **S3 matrix** = cosine similarity between all papers, temporally masked (year_i ≤ year_j)
+3. Scan thresholds 0.75–0.85: graph of S3 ≥ t → Louvain communities → silhouette
+4. Keep the threshold with the highest **SII = silhouette × clustered papers**
+5. Report communities, eigenvector centrality, outliers (papers with no S3 link), author
+   keywords, TF-IDF terms and, when `References` + `EID` are exported, in-corpus citation
+   flows with **QI** (within-community citations / size) and **MI** (share of field
+   citations)
+
+Louvain uses a fixed seed (default 42), so results are reproducible.
+
+## Use it from Claude (no install, no API key)
+
+You need [uv](https://docs.astral.sh/uv/getting-started/installation/).
+
+**Claude Code**
+
+```bash
+claude mcp add s3-bibliometric -- uvx s3-bibliometric
+```
+
+**Claude Desktop**: add this to `claude_desktop_config.json` (Settings → Developer → Edit Config):
+
+```json
+{
+  "mcpServers": {
+    "s3-bibliometric": {
+      "command": "uvx",
+      "args": ["s3-bibliometric"]
+    }
+  }
+}
+```
+
+Then ask, for example:
+
+> Run S3 on ~/Downloads/scopus_innovation.csv, label the communities, and write the
+> intellectual-structure report.
+
+You can also use the built-in **`s3_report`** prompt. The first run downloads the model
+(~420 MB) and PyTorch, so it takes a few minutes. Later runs are fast.
+
+| Tool | What it does |
+|---|---|
+| `run_s3_analysis` | Run S3 on a CSV/XLSX (optional year range); returns a `run_id` and a summary |
+| `list_runs` | Saved runs |
+| `get_threshold_scan` | Silhouette / SII / communities for each threshold |
+| `list_communities` | Community table incl. QI/MI and saved labels |
+| `get_community` | Central papers with abstracts, keywords, TF-IDF terms |
+| `get_outliers` | Unconnected papers + nearest community |
+| `get_citation_structure` | Community × community citation matrix + QI/MI |
+| `search_papers` | Semantic search inside the corpus |
+| `save_community_labels` | Store the labels the assistant proposes |
+| `export_results` | Write CSV outputs |
+
+Runs are saved in `~/s3bib_runs` (change it with the `S3BIB_HOME` environment variable).
+
+## Use it from Python
+
+```bash
+pip install s3-bibliometric
+```
+
+```python
+import s3bib
+
+res = s3bib.run_s3("scopus.csv")       # or run_s3(df, s3bib.S3Config(start_year=2010))
+res.scan                               # threshold scan
+res.communities()                      # size, citations, years, QI/MI
+res.community_papers(0, n=10)          # most central papers
+res.top_keywords(0); res.top_terms(0)
+res.outliers()
+res.citation_matrix()
+res.search("absorptive capacity")
+res.labels = {0: "Open innovation", 1: "M&A"}
+res.export("results/")                 # CSVs
+res.save("runs/innovation")            # reload with s3bib.S3Result.load(...)
+```
+
+## Input
+
+Export from Scopus as CSV with at least **Title** and **Abstract**. Also used if present:
+Year, Cited by, Authors, Author Keywords, Source title, DOI, and **References + EID**
+(needed for the citation analysis).
+
+## Notes
+
+- On a CPU, embedding 5,000 abstracts takes a few minutes. The silhouette step uses an
+  N×N matrix (~100 MB at N = 5,000).
+- A paper counts as citing another if the first 60 characters of the other paper's
+  normalised title appear in its References. This step is O(N²).
+- `examples/make_sample.py` creates a small synthetic dataset for testing.
+
+## Citation
+
+If you use this package, please cite the S3 paper: *Semantic Similarity Score: A New
+Bibliometric Method for Mapping Intellectual Structures in Business Research.*
+
+## License
+
+MIT

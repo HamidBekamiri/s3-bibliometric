@@ -1,0 +1,21 @@
+# Publishes to PyPI when you create a GitHub release.
+# One-time setup on pypi.org: Account -> Publishing -> "Add a new pending publisher"
+#   project: s3-bibliometric, owner: HamidBekamiri, repo: s3-bibliometric,
+#   workflow: publish.yml, environment: pypi
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv build
+      - run: uv publish --trusted-publishing always

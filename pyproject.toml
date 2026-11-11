@@ -1,0 +1,48 @@
+[project]
+name = "s3-bibliometric"
+version = "0.1.0"
+description = "S3 (Semantic Similarity Score) bibliometric method: Python library + MCP server for LLM assistants"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Hamid Bekamiri" }]
+requires-python = ">=3.10"
+keywords = ["bibliometrics", "science mapping", "semantic similarity", "scopus", "mcp", "literature review"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+dependencies = [
+    "numpy",
+    "pandas",
+    "networkx",
+    "scipy",
+    "scikit-learn",
+    "python-louvain",
+    "sentence-transformers",
+    "torch",
+    "openpyxl",
+    "mcp",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.urls]
+Homepage = "https://github.com/HamidBekamiri/s3-bibliometric"
+Issues = "https://github.com/HamidBekamiri/s3-bibliometric/issues"
+
+[project.scripts]
+s3-bibliometric = "s3bib.mcp_server:main"
+s3bib-mcp = "s3bib.mcp_server:main"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/s3bib"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [".venv", ".github"]
