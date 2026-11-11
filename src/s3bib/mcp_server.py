@@ -31,6 +31,8 @@ from .pipeline import S3Config, S3Result, run_s3
 
 # stdout is the MCP channel: send all logs to stderr.
 logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(message)s")
+for _noisy in ("httpx", "httpcore", "huggingface_hub", "sentence_transformers"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 HOME = Path(os.environ.get("S3BIB_HOME", "~/s3bib_runs")).expanduser()
 _RUNS: Dict[str, S3Result] = {}
