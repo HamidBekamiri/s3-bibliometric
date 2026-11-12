@@ -54,6 +54,14 @@ def main(argv=None) -> None:
     sc.add_argument("--scopus", action="store_true", help="Exact citations from the Scopus API (SCOPUS_API_KEY)")
     sc.add_argument("--no-scopus", action="store_true", help="Don't ask about the Scopus API")
     r.add_argument("--seed", type=int, default=42)
+    r.add_argument("--map", default="s3",
+                   help="Map relations: s3 (default, the published method), hybrid (S3 + bibliographic "
+                        "coupling + direct citation + co-citation, 25%% each) or weights such as "
+                        "'s3=0.5,coupling=0.25,cocitation=0.25'")
+    r.add_argument("--strict-citations", action="store_true",
+                   help="Short titles (e.g. 'Introduction') only count as cited when year and first author match")
+    r.add_argument("--prediction", action="store_true",
+                   help="Add link prediction and GNN questions (Q24-Q34) to the report")
     r.add_argument("--save", help="Also save the run to this folder (reload with S3Result.load)")
     sub.add_parser("questions", help="List the ranked research questions")
     sub.add_parser("models", help="List the embedding models you can choose")
@@ -81,7 +89,9 @@ def main(argv=None) -> None:
 
     from .pipeline import S3Config, run_s3
     cfg = S3Config(model_name=model, start_year=a.start_year, end_year=a.end_year, threshold=a.threshold,
-                   community_method=a.method, dedupe=not a.no_dedupe, seed=a.seed)
+                   community_method=a.method, dedupe=not a.no_dedupe, seed=a.seed,
+                   map_weights=a.map, citation_match="strict" if a.strict_citations else "lenient",
+                   prediction=a.prediction)
     bar = lambda s, x: print(f"\r{x:4.0%}  {s:<50}", end="", file=sys.stderr)
     res = run_s3(a.csv, cfg, progress=bar)
     print(file=sys.stderr)
@@ -96,7 +106,7 @@ def main(argv=None) -> None:
               file=sys.stderr)
     if a.save:
         res.save(a.save)
-    out = res.report(a.output, a.title)
+    out = res.report(a.output, a.title, prediction=a.prediction)
     print(f"Report written to {out}")
 
 

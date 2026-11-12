@@ -49,7 +49,7 @@ mcp = _Server(
         "Typical flow: run_s3_analysis on a Scopus CSV -> enrich_citations if the user wants "
         "exact citations -> get_community for each main "
         "community and save_community_labels with short labels -> list_questions shows "
-        "the ranked research questions (Q1-Q24, in 7 stages) this dataset can answer -> "
+        "the ranked research questions (Q1-Q23; Q24-Q34 prediction when asked) this dataset can answer -> "
         "answer_question for the ones the user cares about, in rank order -> "
         "build_report for one HTML report of all answers. Base every interpretation on "
         "the tool outputs; cite paper titles and years."
@@ -101,6 +101,8 @@ def run_s3_analysis(
     community_method: str = "leiden",
     embedding_model: str = "mpnet",
     remove_duplicates: bool = True,
+    map_relations: str = "s3",
+    strict_citations: bool = False,
 ) -> Dict[str, Any]:
     """Run the S3 pipeline on a Scopus CSV/Excel export (needs Title and Abstract;
     Year, Cited by, Authors, Author Keywords, References and EID are used if present).
@@ -112,7 +114,10 @@ def run_s3_analysis(
     to reproduce the S3 web app. embedding_model is a key from list_embedding_models or
     any sentence-transformers model name (ask the user first; default mpnet). Records
     without title and abstract are dropped and duplicates (same DOI/EID/text, or S3 >= 0.98)
-    are removed unless remove_duplicates=False. Can take several minutes
+    are removed unless remove_duplicates=False. map_relations="hybrid" builds the map from
+    S3 + bibliographic coupling + direct citation + co-citation (25% each), or pass weights
+    like "s3=0.5,coupling=0.5"; default "s3" is the published method. strict_citations=True
+    stops short titles such as "Introduction" from matching unrelated references. Can take several minutes
     for thousands of papers the first time; embeddings are cached afterwards.
 
     Returns a run_id plus a summary: best threshold, communities, outlier count.
@@ -123,6 +128,8 @@ def run_s3_analysis(
     stem = re.sub(r"[^A-Za-z0-9_-]+", "_", p.stem)[:40]
     key = (f"{p.resolve()}|{p.stat().st_size}|{start_year}|{end_year}|{seed}|{threshold}|"
            f"{community_method}|{embedding_model}|{remove_duplicates}")
+    if map_relations != "s3" or strict_citations:  # keeps earlier run ids unchanged
+        key += f"|{map_relations}|{strict_citations}"
     run_id = f"{stem}_{hashlib.sha1(key.encode()).hexdigest()[:8]}"
 
     if not rerun and (_run_dir(run_id) / "run.json").exists():
@@ -131,7 +138,8 @@ def run_s3_analysis(
         cfg = S3Config(start_year=start_year, end_year=end_year, seed=seed,
                        cache_dir=str(HOME / "_cache"), threshold=threshold,
                        community_method=community_method, model_name=embedding_model,
-                       dedupe=remove_duplicates)
+                       dedupe=remove_duplicates, map_weights=map_relations,
+                       citation_match="strict" if strict_citations else "lenient")
         res = run_s3(p, cfg)
         res.save(_run_dir(run_id))
         _RUNS[run_id] = res
@@ -315,11 +323,13 @@ def export_networks(run_id: str, output_dir: Optional[str] = None) -> Dict[str, 
 
 
 @mcp.tool()
-def list_questions(run_id: str) -> List[Dict[str, Any]]:
-    """The ranked research questions of the S3 method (Q1-Q24) in 7 stages: trust the map,
-    map the field, knowledge flows, evolution, actors, interdisciplinarity, prediction. Shows priority
-    and whether this dataset has the columns each question needs."""
-    t = _get(run_id).questions()
+def list_questions(run_id: str, include_prediction: bool = False) -> List[Dict[str, Any]]:
+    """The ranked research questions of the S3 method in stages: trust the map, map the field,
+    knowledge flows, evolution, actors, interdisciplinarity (Q1-Q23). With
+    include_prediction=True also link prediction (Q24-Q29) and graph learning / GNNs
+    (Q30-Q34); these are off by default. Shows priority and whether this dataset has the
+    columns each question needs."""
+    t = _get(run_id).questions(prediction=include_prediction)
     return json.loads(t.to_json(orient="records"))
 
 
@@ -332,11 +342,12 @@ def answer_question(run_id: str, question_id: str, max_rows: int = 20) -> Dict[s
 
 @mcp.tool()
 def build_report(run_id: str, output_path: Optional[str] = None,
-                 title: Optional[str] = None) -> Dict[str, str]:
+                 title: Optional[str] = None, prediction: bool = False) -> Dict[str, str]:
     """Answer every available question and write one self-contained HTML report
-    (findings, charts and tables per question). Default path: the run folder."""
+    (findings, charts and tables per question). prediction=True adds link prediction and
+    GNN questions (Q24-Q34; a few minutes more). Default path: the run folder."""
     res = _get(run_id)
-    p = res.report(output_path or (_run_dir(run_id) / "s3_report.html"), title)
+    p = res.report(output_path or (_run_dir(run_id) / "s3_report.html"), title, prediction=prediction)
     return {"report": str(p)}
 
 

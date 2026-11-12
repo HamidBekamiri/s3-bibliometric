@@ -1,6 +1,6 @@
 [project]
 name = "s3-bibliometric"
-version = "0.7.0"
+version = "0.8.0"
 description = "S3 (Semantic Similarity Score) bibliometric method: Python library + MCP server for LLM assistants"
 readme = "README.md"
 license = "MIT"

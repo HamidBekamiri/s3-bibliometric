@@ -92,9 +92,20 @@ class S3Config:
     mi_denominator: str = "retained"   # MI denominator: links made by retained papers, or "all" links
     dedupe: bool = True                # remove duplicate records before the analysis
     dedupe_threshold: float = 0.98     # S3 at or above this = the same paper (reprints, double indexing)
+    # Map: None = S3 similarity only (the published method); "hybrid" = S3, bibliographic
+    # coupling, direct citation and co-citation at 25% each; or a dict of weights.
+    map_weights: Optional[Any] = None
+    # Citation matching from References text: "lenient" (as in the S3 web app) or "strict"
+    # (short titles such as "Introduction" also need the year and first author to match).
+    citation_match: str = "lenient"
+    prediction: bool = False           # include the prediction questions (link prediction, GNNs)
 
     def __post_init__(self):
+        from .hybrid import resolve_weights
         from .models import default_thresholds, resolve_model
+        self.map_weights = resolve_weights(self.map_weights)
+        if self.citation_match not in ("lenient", "strict"):
+            raise ValueError("citation_match must be 'lenient' or 'strict'")
         self.model_name = resolve_model(self.model_name)
         if self.thresholds is None:
             self.thresholds = default_thresholds(self.model_name)
@@ -367,7 +378,7 @@ def _partition_at(s3_directed: np.ndarray, s3_full: np.ndarray, t: float, seed: 
         labels_r = np.array([retained[i] for i in nodes])
         n_kept = len(nodes)
         sil = 0.0
-        if len(set(labels_r)) > 1:
+        if 1 < len(set(labels_r)) < n_kept:
             dist = np.maximum(1.0 - s3_full[np.ix_(nodes, nodes)], 0.0)
             np.fill_diagonal(dist, 0.0)
             sil = float(silhouette_score(dist, labels_r, metric="precomputed"))
@@ -378,6 +389,12 @@ def _partition_at(s3_directed: np.ndarray, s3_full: np.ndarray, t: float, seed: 
     row = {"threshold": float(t), "silhouette": sil, "n_papers": int(n_kept),
            "sii": sil * n_kept, "n_communities": n_comm, "n_edges": int(n_edges)}
     return row, part
+
+
+def _link_counts(sim_dir: np.ndarray, thresholds: Sequence[float]) -> List[int]:
+    iu = np.triu_indices(sim_dir.shape[0], k=1)
+    v = np.maximum(sim_dir[iu], sim_dir.T[iu])
+    return [int((v >= t).sum()) for t in thresholds]
 
 
 def threshold_scan(s3_directed: np.ndarray, s3_full: np.ndarray,
@@ -399,9 +416,39 @@ def threshold_scan(s3_directed: np.ndarray, s3_full: np.ndarray,
 # --------------------------------------------------------------------------
 # Citations (in-corpus, matched from the References field)
 # --------------------------------------------------------------------------
-def citation_edges(df: pd.DataFrame) -> List[tuple[int, int]]:
+SHORT_TITLE = 25  # normalised characters; shorter titles match too much by accident
+
+
+def _first_surname(authors: Any) -> str:
+    a = str(authors).split(";")[0].strip() if not _blank_val(authors) else ""
+    return _norm_text(a.split(",")[0].split(" ")[0]) if a else ""
+
+
+def _blank_val(v: Any) -> bool:
+    return v is None or (isinstance(v, float) and np.isnan(v)) or str(v).strip() in ("", "nan")
+
+
+def _strict_ok(fp: str, j: int, references: str, years: List[Any], authors: List[Any]) -> bool:
+    """A short title only counts as cited if the matching reference also carries the cited
+    paper's year (±1) and its first author's surname."""
+    if len(fp) >= SHORT_TITLE:
+        return True
+    from .questions import _split_refs
+    sn = _first_surname(authors[j])
+    for ref in _split_refs(references):
+        if fp in _norm_text(ref):
+            y = re.findall(r"\((\d{4})[a-z]?\)", ref)
+            if (y and pd.notna(years[j]) and abs(int(y[-1]) - int(years[j])) <= 1
+                    and sn and sn in _norm_text(ref[:150])):
+                return True
+    return False
+
+
+def citation_edges(df: pd.DataFrame, strict: bool = False) -> List[tuple[int, int]]:
     """(citing_idx, cited_idx) pairs: a paper cites another if the first 60
-    chars of the other's normalised title appear in its References text."""
+    chars of the other's normalised title appear in its References text.
+    strict=True: titles shorter than 25 characters (e.g. 'Introduction') also need the
+    year and first author in the same reference."""
     if df["references"].isna().all() or df["eid"].isna().all():
         return []
     fp = df["title"].map(_norm_text).str[:60]
@@ -413,6 +460,7 @@ def citation_edges(df: pd.DataFrame) -> List[tuple[int, int]]:
             fp_to_idx.setdefault(f, []).append(i)
     eids = df["eid"].tolist()
     years = df["year"].tolist()
+    authors = df["authors"].tolist()
     edges = set()
     for i, r in enumerate(refs):
         if not r:
@@ -421,7 +469,7 @@ def citation_edges(df: pd.DataFrame) -> List[tuple[int, int]]:
             if f not in r:
                 continue
             j = js[-1] if len(js) == 1 else _pick_by_year(f, js, raw.iat[i], years)
-            if eids[i] != eids[j]:
+            if eids[i] != eids[j] and (not strict or _strict_ok(f, j, raw.iat[i], years, authors)):
                 edges.add((i, j))
     return sorted(edges)
 
@@ -464,17 +512,39 @@ class S3Result:
             s = apply_temporal_mask(s, self.papers["year"].to_numpy(dtype=float))
         return s
 
+    def map_matrix(self, directed: bool = True) -> np.ndarray:
+        """The matrix the map is built from: the S3 matrix, or the hybrid matrix when
+        config.map_weights is set (S3 + coupling + direct citation + co-citation)."""
+        if not self.config.map_weights:
+            return self.s3(directed)
+        from .hybrid import hybrid_matrix
+        if getattr(self, "_hybrid", None) is None:
+            self._hybrid = hybrid_matrix(self.embeddings, self.papers, self.citation_pairs,
+                                         self.config.map_weights)
+        h = self._hybrid
+        if directed and self.config.temporal_mask:
+            h = apply_temporal_mask(h, self.papers["year"].to_numpy(dtype=float))
+        return h
+
     def graph(self) -> nx.Graph:
-        """The S3 similarity graph at the chosen threshold (cached)."""
+        """The map graph at the chosen threshold (S3 links, or hybrid links), cached."""
         if getattr(self, "_graph", None) is None:
             t = self.best["threshold"] if self.best else 1.01
-            self._graph = build_graph(self.s3(), t)
+            self._graph = build_graph(self.map_matrix(), t)
         return self._graph
 
-    def questions(self, available_only: bool = False) -> pd.DataFrame:
-        """The ranked research questions S3 can answer, and whether this data supports each."""
+    def questions(self, available_only: bool = False, prediction: Optional[bool] = None) -> pd.DataFrame:
+        """The ranked research questions S3 can answer, and whether this data supports each.
+        The prediction questions (Q24-Q34) are listed when prediction=True or
+        config.prediction is set."""
         from .questions import question_table
-        return question_table(self, available_only)
+        return question_table(self, available_only, prediction)
+
+    def find_experts(self, text: str, kind: str = "author", n: int = 10) -> pd.DataFrame:
+        """Authors (or institutions, funders, keywords, journals) whose work best fits a text,
+        from the R-GCN knowledge-graph embeddings (Q32)."""
+        from .gnn import find_experts
+        return find_experts(self, text, kind, n)
 
     def answer(self, qid: str):
         """Answer one question, e.g. res.answer("Q7"). Returns an Answer
@@ -510,10 +580,12 @@ class S3Result:
         from .ktree import knowledge_tree
         return knowledge_tree(self, window_years, n_communities)
 
-    def report(self, path: Union[str, Path], title: Optional[str] = None) -> Path:
-        """Answer every available question and write one self-contained HTML report."""
+    def report(self, path: Union[str, Path], title: Optional[str] = None,
+               prediction: Optional[bool] = None) -> Path:
+        """Answer every available question and write one self-contained HTML report.
+        prediction=True adds the link-prediction and GNN questions (Q24-Q34)."""
         from .report import build_report
-        return build_report(self, path, title)
+        return build_report(self, path, title, prediction=prediction)
 
     # ---- views -----------------------------------------------------------
     def communities(self, min_size: int = 2) -> pd.DataFrame:
@@ -736,13 +808,29 @@ def run_s3(source: Union[str, Path, pd.DataFrame],
     n = len(df)
 
     say("Computing S3 matrix", 0.5)
-    s3 = s3_matrix(emb)
     years = df["year"].to_numpy(dtype=float)
-    s3_dir = apply_temporal_mask(s3, years) if cfg.temporal_mask else s3
+    thresholds = cfg.thresholds
+    pairs: List[tuple[int, int]] = []
+    if cfg.map_weights:
+        from .hybrid import density_thresholds, hybrid_matrix
+        say("Matching in-corpus citations", 0.5)
+        pairs = citation_edges(df, strict=cfg.citation_match == "strict")
+        say("Building the hybrid map (S3 + citation relations)", 0.52)
+        s3 = hybrid_matrix(emb, df, pairs, cfg.map_weights)
+        s3_dir = apply_temporal_mask(s3, years) if cfg.temporal_mask else s3
+        from .models import default_thresholds
+        if tuple(cfg.thresholds) == tuple(default_thresholds(cfg.model_name)):
+            # same numbers of links as the S3 scan of this corpus, so the maps are comparable
+            plain = s3_matrix(emb)
+            plain = apply_temporal_mask(plain, years) if cfg.temporal_mask else plain
+            thresholds = density_thresholds(s3_dir, _link_counts(plain, cfg.thresholds))
+    else:
+        s3 = s3_matrix(emb)
+        s3_dir = apply_temporal_mask(s3, years) if cfg.temporal_mask else s3
 
     if cfg.community_method not in ("leiden", "louvain"):
         raise ValueError("community_method must be 'leiden' or 'louvain'")
-    scan, best, part = threshold_scan(s3_dir, s3, cfg.thresholds, cfg.seed,
+    scan, best, part = threshold_scan(s3_dir, s3, thresholds, cfg.seed,
                                       progress=lambda s, p: say(s, 0.5 + 0.35 * p),
                                       method=cfg.community_method)
     if cfg.threshold is not None:  # reproduce a fixed (e.g. published) threshold
@@ -758,7 +846,6 @@ def run_s3(source: Union[str, Path, pd.DataFrame],
     df["nearest_similarity"] = np.nan
     df["suggested_community"] = pd.array([None] * n, dtype="Int64")
 
-    pairs: List[tuple[int, int]] = []
     if best is not None:
         say("Building final community graph", 0.86)
         G = build_graph(s3_dir, best["threshold"])
@@ -782,8 +869,9 @@ def run_s3(source: Union[str, Path, pd.DataFrame],
             df.at[i, "nearest_similarity"] = float(row[j])
             df.at[i, "suggested_community"] = df.at[j, "community"]
 
-        say("Matching in-corpus citations", 0.9)
-        pairs = citation_edges(df)
+        if not cfg.map_weights:
+            say("Matching in-corpus citations", 0.9)
+            pairs = citation_edges(df, strict=cfg.citation_match == "strict")
         if pairs:
             # local citations = citations a paper receives from other papers in the corpus
             received = Counter(j for _, j in pairs)

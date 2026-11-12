@@ -33,8 +33,10 @@ STAGES = {
     4: "Evolution",
     5: "Actors",
     6: "Interdisciplinarity",
-    7: "Prediction",
+    7: "Link prediction",
+    8: "Graph learning (GNN)",
 }
+PREDICTION_STAGES = (7, 8)  # off by default: S3Config(prediction=True) or report(prediction=True)
 
 
 @dataclass
@@ -71,6 +73,10 @@ class Question:
     method: str
     needs: Tuple[str, ...]  # data columns needed beyond Title + Abstract
     fn: Callable[[Any], Answer]
+
+    @property
+    def prediction(self) -> bool:
+        return self.stage in PREDICTION_STAGES
 
 
 # ===========================================================================
@@ -1141,6 +1147,11 @@ def q_predict(res) -> Answer:
     return a
 
 
+def _pq(fn: str, res) -> Answer:
+    from . import predq
+    return getattr(predq, fn)(res)
+
+
 QUESTIONS: List[Question] = [
     Question("Q1", 1, "Essential", "What similarity threshold structures this field best?",
              "Shows the S3 threshold choice is data-driven, not arbitrary.",
@@ -1210,6 +1221,36 @@ QUESTIONS: List[Question] = [
              "Predictive validation of S3: content similarity now, citations later.",
              "Temporal link prediction (last 5 years vs earlier papers): ROC AUC, MAP, recall@10 for "
              "S3, popularity, both, and bibliographic coupling", ("citations", "years"), q_predict),
+    Question("Q25", 7, "Recommended", "Which knowledge gaps will close: which communities will start citing each other?",
+             "Turns Q11 into a forecast.", "Temporal link prediction on community pairs: S3 centroid similarity vs sizes",
+             ("citations", "years"), lambda r: _pq("q_gaps_close", r)),
+    Question("Q26", 7, "Optional", "Which concepts will enter which communities?",
+             "Turns Q14 into a forecast.", "Temporal link prediction (keyword, community): S3 similarity vs frequency",
+             ("keywords", "years"), lambda r: _pq("q_concepts_enter", r)),
+    Question("Q27", 7, "Optional", "Which authors will move into a new community?",
+             "Turns Q16 into a forecast.", "Temporal link prediction (author, community): S3 similarity vs community size",
+             ("authors", "years"), lambda r: _pq("q_authors_move", r)),
+    Question("Q28", 7, "Optional", "Who will co-author next?",
+             "Turns Q17 into a forecast.", "Temporal link prediction on author pairs: S3 similarity vs Adamic-Adar",
+             ("authors", "years"), lambda r: _pq("q_coauthors", r)),
+    Question("Q29", 7, "Optional", "Which institutions and funders will enter which communities?",
+             "Turns Q18 and Q20 into forecasts.", "Temporal link prediction (institution/funder, community)",
+             ("affiliations", "years"), lambda r: _pq("q_orgs_enter", r)),
+    Question("Q30", 8, "Optional", "Which community does a new or outlier paper belong to?",
+             "Improves Q3's nearest-paper rule.", "Node classification: GraphSAGE vs nearest paper, centroid, text classifier",
+             (), lambda r: _pq("q_gnn_classify", r)),
+    Question("Q31", 8, "Optional", "Which recent papers will be highly cited, and is impact driven by content or network position?",
+             "Extends Q8 and Q22.", "Node regression: text model vs network-position model vs GraphSAGE (temporal split)",
+             ("years", "impact"), lambda r: _pq("q_gnn_impact", r)),
+    Question("Q32", 8, "Optional", "Who fits a topic: authors, institutions and funders for expertise search or partner matching",
+             "Extends Q15-Q20.", "Heterogeneous graph learning: R-GCN on the knowledge graph, held-out link test",
+             ("authors",), lambda r: _pq("q_gnn_hetero", r)),
+    Question("Q33", 8, "Optional", "Which communities will grow, emerge or decline next?",
+             "Extends Q13 and Q23.", "Temporal graph learning: GCN + GRU over yearly community shares",
+             ("years",), lambda r: _pq("q_gnn_temporal", r)),
+    Question("Q34", 8, "Optional", "Which links are missing from the knowledge graph?",
+             "Extends Q17, Q18 and Q20.", "KG embeddings: TransE and RotatE, filtered MRR/Hits@10, composed entity → community links",
+             ("authors",), lambda r: _pq("q_gnn_kg", r)),
 ]
 _BY_ID = {q.qid: q for q in QUESTIONS}
 
@@ -1233,9 +1274,15 @@ def available(res, q: Question) -> Tuple[bool, str]:
     return True, ""
 
 
-def question_table(res, available_only: bool = False) -> pd.DataFrame:
+def prediction_on(res, prediction: Optional[bool] = None) -> bool:
+    return bool(res.config.prediction if prediction is None else prediction)
+
+
+def question_table(res, available_only: bool = False, prediction: Optional[bool] = None) -> pd.DataFrame:
+    """The ranked questions. The prediction stages (7-8) are listed only when enabled."""
     rows = []
-    for rank, q in enumerate(QUESTIONS, 1):
+    on = prediction_on(res, prediction)
+    for rank, q in enumerate([q for q in QUESTIONS if on or not q.prediction], 1):
         ok, why = available(res, q)
         rows.append({"rank": rank, "id": q.qid, "stage": f"{q.stage}. {STAGES[q.stage]}",
                      "priority": q.priority, "question": q.text, "method": q.method,

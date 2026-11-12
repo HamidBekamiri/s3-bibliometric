@@ -94,7 +94,8 @@ def test_requires_title_and_abstract(df):
 
 def test_every_question_answers(res, tmp_path):
     qt = res.questions()
-    assert list(qt["id"]) == [q.qid for q in s3bib.QUESTIONS]
+    assert list(qt["id"]) == [q.qid for q in s3bib.QUESTIONS if not q.prediction]  # prediction hidden
+    assert list(res.questions(prediction=True)["id"]) == [q.qid for q in s3bib.QUESTIONS]
     assert qt["available"].all()
     for qid in qt["id"]:
         a = res.answer(qid)
@@ -104,6 +105,7 @@ def test_every_question_answers(res, tmp_path):
     assert "Q1" in html and "Q23" in html and "Could not compute" not in html
     assert 'class="ktree"' in html  # knowledge tree under Q13
     assert "force-graph@1.51.0" in html and 's3FG("' in html  # network drawn as in the S3 web app
+    assert 'id="Q24"' not in html and 'class="tv"' in html  # prediction off; tables open as charts
 
 
 def test_missing_columns_are_skipped(df):
@@ -326,3 +328,64 @@ def test_citation_prediction(res):
     assert r["table"].equals(citation_prediction(res)["table"])  # seeded: same result every run
     a = res.answer("Q24")
     assert "ROC AUC" in a.findings[1] and a.chart["type"] == "line"
+
+
+
+def test_prediction_questions(res, tmp_path):
+    """Q25-Q34 run on real data (or say the corpus is too small) and appear only when enabled."""
+    from s3bib.questions import QUESTIONS
+    pred = [q.qid for q in QUESTIONS if q.prediction]
+    assert pred == [f"Q{i}" for i in range(24, 35)]
+    for qid in pred[1:]:
+        a = res.answer(qid)  # direct calls always work
+        assert a.findings, qid
+        a.to_dict()
+    html = res.report(tmp_path / "p.html", prediction=True).read_text()
+    assert 'id="Q30"' in html and "Could not compute" not in html
+
+
+def test_link_prediction_evaluation():
+    from s3bib.linkpred import evaluate
+    y = np.array([1, 1, 0, 0, 0, 1, 0, 0])
+    t = evaluate({"perfect": y.astype(float), "reversed": 1.0 - y}, y, k=3).set_index("method")
+    assert t.loc["perfect", "ROC AUC"] == 1.0 and t.loc["reversed", "ROC AUC"] == 0.0
+    assert t.loc["perfect", "precision@3"] == 1.0
+
+
+def test_gnn_models_on_real_data(res):
+    from s3bib import gnn
+    k = gnn.kg_embeddings(res, epochs=5)
+    t = k["table"].set_index("model")
+    assert {"TransE", "RotatE", "Popularity (baseline)"} <= set(t.index) and (t["MRR"] > 0).all()
+    h = gnn.hetero_embeddings(res, epochs=20)
+    assert h is not None and len(h["names"]) == h["n_entities"]
+    top = gnn.find_experts(res, res.embeddings[0], "author", 5)
+    assert len(top) == 5
+
+
+def test_hybrid_map(df):
+    from s3bib.hybrid import resolve_weights
+    assert resolve_weights("hybrid") == {"s3": 0.25, "coupling": 0.25, "direct": 0.25, "cocitation": 0.25}
+    assert resolve_weights("s3=1,coupling=1") == {"s3": 0.5, "coupling": 0.5, "direct": 0.0, "cocitation": 0.0}
+    assert resolve_weights(None) is None and resolve_weights("s3") is None
+    with pytest.raises(ValueError):
+        resolve_weights({"unicorn": 1})
+    plain = s3bib.run_s3(df, **QUIET)
+    hyb = s3bib.run_s3(df, s3bib.S3Config(map_weights="hybrid"), **QUIET)
+    # each hybrid threshold links about as many pairs as the matching S3 threshold
+    assert [r["n_edges"] for r in hyb.scan][:3] == pytest.approx([r["n_edges"] for r in plain.scan][:3], rel=0.1)
+    assert hyb.graph().number_of_edges() > 0 and len(hyb.communities()) >= 2
+    assert hyb.config.map_weights["coupling"] == 0.25
+
+
+def test_strict_citation_matching(df):
+    """A short title only counts when the reference also has its year and first author."""
+    from s3bib.pipeline import citation_edges, load_papers
+    P = load_papers(df)
+    i = int(P.index[P["eid"] == DIV][0])
+    P.loc[len(P)] = P.loc[i]  # a real paper cited under a generic short title
+    P.at[len(P) - 1, "title"], P.at[len(P) - 1, "eid"] = "Introduction", "intro"
+    P.at[0, "references"] = "Smith J., Introduction to econometrics, (2017)"
+    lenient = {(a, b) for a, b in citation_edges(P) if b == len(P) - 1}
+    strict = {(a, b) for a, b in citation_edges(P, strict=True) if b == len(P) - 1}
+    assert (0, len(P) - 1) in lenient and (0, len(P) - 1) not in strict

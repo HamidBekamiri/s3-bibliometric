@@ -61,7 +61,35 @@ s3bib.S3Config(threshold=0.78)              # reproduce a published threshold
 s3bib.S3Config(community_method="louvain")  # reproduce the S3 web app instead
 s3bib.S3Config(dedupe=False)                # keep duplicates
 s3bib.S3Config(mi_denominator="all")        # MI over all in-corpus links
+s3bib.S3Config(citation_match="strict")     # short titles need year + first author too
+s3bib.S3Config(map_weights="hybrid")        # hybrid map (below)
 ```
+
+**Strict citation matching.** Matching titles inside References text can link a short,
+generic title such as "Introduction" to every reference that contains the word. On the
+Innovation & Diversity corpus about a quarter of the matched citations came from titles of
+25 characters or fewer, and only 11% of those carried the cited paper's year or first
+author. `citation_match="strict"` (CLI `--strict-citations`) keeps a short-title match only
+when the year (±1) and first author also appear in the reference. The default stays
+`"lenient"`, as in the S3 web app and the published paper.
+
+**Hybrid maps.** The published S3 map uses text similarity alone. A hybrid map adds the
+classic citation relations, each scaled 0–1: bibliographic coupling and co-citation (Salton
+cosine) and direct citation. `map_weights="hybrid"` gives each 25%; or choose your own:
+
+```python
+s3bib.S3Config(map_weights="hybrid")                          # s3, coupling, direct, cocitation: 25% each
+s3bib.S3Config(map_weights={"s3": 0.5, "coupling": 0.5})      # any mix, normalised to sum 1
+```
+
+```bash
+s3bib report scopus.csv --map hybrid
+s3bib report scopus.csv --map "s3=0.5,cocitation=0.5"
+```
+
+Hybrid values sit on a different scale than S3, so the threshold scan matches link density:
+each hybrid threshold links as many pairs as one S3 threshold (0.75–0.85) on the same corpus,
+and SII picks the best, as for S3.
 
 On the command line, `s3bib report scopus.csv` asks which model to use and whether to use the
 Scopus API; in Claude, the assistant asks the same two questions before the first run.
@@ -109,7 +137,7 @@ res.export_networks("networks/")      # node/edge CSVs (Neo4j, igraph) + GraphML
                                       # paper-reference network
 ```
 
-## The guided pipeline: 24 research questions
+## The guided pipeline: 34 research questions
 
 Every analysis answers one research question. Go through them in order, or jump to the
 ones you need. Questions whose data is missing from your export are skipped and say why.
@@ -122,7 +150,8 @@ ones you need. Questions whose data is missing from your export are skipped and 
 | **4. Evolution** | Q13 Emerging, growing and declining communities · Q14 Rising and fading concepts |
 | **5. Actors** | Q15 Leading authors (RFI) · Q16 Broker authors · Q17 Collaboration gaps · Q18 Countries and institutions · Q19 Journals · Q20 Funders |
 | **6. Interdisciplinarity** | Q21 How interdisciplinary each community is (Rao-Stirling with S3 distances) · Q22 Are interdisciplinary papers cited more? · Q23 Is the field becoming more interdisciplinary? |
-| **7. Prediction** | Q24 Does S3 similarity predict which earlier papers new papers will cite? (temporal link prediction: the last 5 years against earlier papers; S3 vs popularity, both combined, and bibliographic coupling) |
+| **7. Link prediction** *(off by default)* | Q24 Which earlier papers will new papers cite? · Q25 Which knowledge gaps will close? · Q26 Which concepts will enter which communities? · Q27 Which authors will move into a new community? · Q28 Who will co-author next? · Q29 Which institutions and funders will enter which communities? |
+| **8. Graph learning (GNN)** *(off by default)* | Q30 Community of new or outlier papers (GraphSAGE) · Q31 Future impact: content or network position? (GraphSAGE regression) · Q32 Expertise search and partner matching (R-GCN on the knowledge graph) · Q33 Which communities will grow or decline next? (GCN + GRU) · Q34 Missing links in the knowledge graph (TransE, RotatE) |
 
 ```python
 res.questions()              # the ranked list, and which ones your data supports
@@ -135,6 +164,30 @@ From the command line:
 ```bash
 s3bib report scopus.csv -o report.html
 ```
+
+**Prediction (stages 7–8) is off by default.** It adds a few minutes and answers forecasting
+questions, so it appears only when you ask for it:
+
+```python
+res = s3bib.run_s3("scopus.csv", s3bib.S3Config(prediction=True))   # or:
+res.report("report.html", prediction=True)
+res.answer("Q30")                                   # a single prediction question always works
+res.find_experts("board diversity and green innovation", kind="author")   # R-GCN (Q32)
+```
+
+```bash
+s3bib report scopus.csv --prediction
+```
+
+Every prediction is tested honestly before it is used: the corpus is split in time (the last
+5 years are the test window), models see only information from before the split, and each
+result is compared with simple baselines (popularity, community size, Adamic-Adar, nearest
+paper) with 95% intervals, so the report says when a model does not beat chance. The GNNs
+(GraphSAGE, R-GCN, a temporal GCN + GRU, TransE and RotatE) are small and written in plain
+PyTorch, which sentence-transformers already installs; nothing else is needed.
+
+**Charts or tables.** Result tables open as bar charts; switch any of them to the table (and
+pick the column to plot), or switch all of them at once at the top of the report.
 
 In Claude, use the **`s3_guided`** prompt, or ask: *"Walk me through the S3 questions for
 my Scopus file."*

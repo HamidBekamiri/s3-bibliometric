@@ -448,6 +448,24 @@ def _chart(spec: Optional[Dict[str, Any]]) -> str:
     return f'<figure><figcaption>{_e(spec.get("title"))}</figcaption>{body}</figure>' if body else ""
 
 
+_TV_N = [0]
+_SKIP_COLS = ("year", "rank", "first", "last", "id", "community", "window", "papers so far")
+
+
+def _chart_columns(d: pd.DataFrame):
+    """(label column, numeric columns) when a table reads well as a bar chart, else None."""
+    if len(d) < 2:
+        return None
+    num = [c for c in d.columns if pd.api.types.is_numeric_dtype(d[c]) and not pd.api.types.is_bool_dtype(d[c])
+           and d[c].notna().any()]
+    txt = [c for c in d.columns if c not in num and d[c].astype(str).str.len().max() > 0]
+    if not num or not txt:
+        return None
+    label = txt[0]
+    plot = [c for c in num if not any(k in str(c).lower() for k in _SKIP_COLS)]
+    return (label, plot) if plot else None  # only ids or years: a table reads better
+
+
 def _table(name: str, df: pd.DataFrame, max_rows: int = 20) -> str:
     d = df.head(max_rows)
     head = "".join(f"<th>{_e(c)}</th>" for c in d.columns)
@@ -465,8 +483,67 @@ def _table(name: str, df: pd.DataFrame, max_rows: int = 20) -> str:
         body.append(f"<tr>{''.join(tds)}</tr>")
     more = f'<p class="more">Showing {len(d)} of {len(df)} rows. Full table: export or res.answer().</p>' \
         if len(df) > max_rows else ""
-    return f'<details open><summary>{_e(name)}</summary><div class="tw"><table>' \
-           f'<tr>{head}</tr>{"".join(body)}</table></div>{more}</details>'
+    table = f'<div class="tw"><table><tr>{head}</tr>{"".join(body)}</table></div>'
+    cc = _chart_columns(d)
+    if cc is None:
+        return f'<details open><summary>{_e(name)}</summary>{table}{more}</details>'
+    label, cols = cc
+    _TV_N[0] += 1
+    tid = f"s3tv{_TV_N[0]}"
+    first = d.columns[0]
+
+    def lab(k, v):
+        if str(v).strip() not in ("", "nan", "None", "<NA>"):
+            return str(v)
+        w = d.iloc[k][first]  # empty label (e.g. an unlabelled community): use the first column
+        return f"C{w}" if str(first).lower() == "community" else str(w)
+
+    def num(v):
+        return None if pd.isna(v) or not math.isfinite(float(v)) else float(v)
+    data = {"labels": [lab(k, v) for k, v in enumerate(d[label].tolist())], "label": str(label),
+            "cols": {str(c): [num(v) for v in d[c].tolist()] for c in cols}}
+    js = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
+    opts = "".join(f'<option value="{_e(c)}">{_e(c)}</option>' for c in cols)
+    sel = (f'<label>Plot <select aria-label="Column to plot">{opts}</select></label>' if len(cols) > 1
+           else f'<span class="mut">{_e(cols[0])}</span>')
+    return (f'<details open><summary>{_e(name)}</summary><div class="tv" id="{tid}" data-view="chart">'
+            f'<div class="tv-bar"><button type="button" data-v="chart" class="on">Chart</button>'
+            f'<button type="button" data-v="table">Table</button>{sel}</div>'
+            f'<div class="tv-chart"></div><div class="tv-table">{table}</div></div>{more}'
+            f'<script type="application/json" id="{tid}-data">{js}</script><script>s3TV("{tid}")</script></details>')
+
+
+TV_JS = r"""
+<script>
+function s3TVPref(){try{return localStorage.getItem('s3-view')||'chart'}catch(e){return 'chart'}}
+function s3TV(id){
+  const box=document.getElementById(id), d=JSON.parse(document.getElementById(id+'-data').textContent);
+  const ch=box.querySelector('.tv-chart'), sel=box.querySelector('select');
+  let col=sel?sel.value:Object.keys(d.cols)[0];
+  const fmt=v=>v==null?'':Math.abs(v)>=1000?Math.round(v).toLocaleString():(+v.toPrecision(3)).toString();
+  function draw(){
+    const rows=d.labels.map((l,k)=>[l,d.cols[col][k]]).filter(r=>r[1]!=null).sort((a,b)=>b[1]-a[1]);
+    const mx=Math.max(0,...rows.map(r=>r[1])), mn=Math.min(0,...rows.map(r=>r[1])), span=(mx-mn)||1;
+    const W=640, lw=250, rh=22, H=rows.length*rh+8, x0=lw+(0-mn)/span*(W-lw-60);
+    const sx=v=>lw+(v-mn)/span*(W-lw-60);
+    let s=`<svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="${col}">`;
+    rows.forEach(([l,v],k)=>{const y=4+k*rh, a=Math.min(sx(v),x0), w=Math.max(1,Math.abs(sx(v)-x0));
+      const t=l.length>32?l.slice(0,31)+'…':l;
+      s+=`<text x="${lw-8}" y="${y+14}" text-anchor="end" class="lab"><title></title>${t.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</text>`+
+         `<rect x="${a}" y="${y+3}" width="${w}" height="${rh-8}" rx="2" fill="${v<0?'var(--neg)':'var(--acc)'}"></rect>`+
+         `<text x="${Math.max(sx(v),x0)+5}" y="${y+14}" class="val">${fmt(v)}</text>`;});
+    ch.innerHTML=s+'</svg>';
+    ch.querySelectorAll('text.lab title').forEach((e,k)=>e.textContent=rows[k][0]);}
+  function view(v){box.dataset.view=v;box.querySelectorAll('.tv-bar button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));}
+  box.querySelectorAll('.tv-bar button').forEach(b=>b.addEventListener('click',()=>view(b.dataset.v)));
+  if(sel)sel.addEventListener('change',()=>{col=sel.value;draw();});
+  draw(); view(s3TVPref());
+}
+function s3TVAll(v){try{localStorage.setItem('s3-view',v)}catch(e){}
+  document.querySelectorAll('.tv').forEach(b=>{b.dataset.view=v;b.querySelectorAll('.tv-bar button').forEach(x=>x.classList.toggle('on',x.dataset.v===v));});
+  document.querySelectorAll('.tv-global button').forEach(x=>x.classList.toggle('on',x.dataset.v===v));}
+</script>
+"""
 
 
 CSS = """
@@ -529,6 +606,14 @@ footer{margin-top:40px;font-size:.85rem;color:var(--mut)}
 .fg button:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
 @media (max-width:640px){.fg-side{position:absolute;right:0;top:0;bottom:0;max-width:85%}}
 .kt{border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+:root{--neg:#b8456b}
+.tv-bar,.tv-global{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:.82rem;color:var(--mut);margin:4px 0 6px}
+.tv-bar button,.tv-global button{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:5px;padding:2px 10px;cursor:pointer}
+.tv-bar button.on,.tv-global button.on{background:var(--acc);border-color:var(--acc);color:var(--card)}
+.tv-bar select{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:5px;padding:1px 4px;margin-left:4px;max-width:260px}
+.tv[data-view="chart"] .tv-table,.tv[data-view="table"] .tv-chart{display:none}
+.tv-chart .chart{max-width:100%;height:auto}
+.tv-bar button:focus-visible,.tv-global button:focus-visible,.tv-bar select:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
 .ktree .lab{font-size:12px;fill:var(--fg)}
 .kt-wrap{display:flex;width:max-content}
 .kt-names{position:sticky;left:0;z-index:1;width:190px;flex:none;background:var(--bg);border-right:1px solid var(--line)}
@@ -545,7 +630,9 @@ footer{margin-top:40px;font-size:.85rem;color:var(--mut)}
 
 
 def build_report(res, path: Union[str, Path], title: Optional[str] = None,
-                 qids: Optional[List[str]] = None) -> Path:
+                 qids: Optional[List[str]] = None, prediction: Optional[bool] = None) -> Path:
+    from .questions import prediction_on
+    show_pred = prediction_on(res, prediction)
     path = Path(path).expanduser()
     title = title or "S3 analysis of the field"
     n = len(res.papers)
@@ -555,6 +642,8 @@ def build_report(res, path: Union[str, Path], title: Optional[str] = None,
     stage_open = None
     for q in QUESTIONS:
         if qids and q.qid not in qids:
+            continue
+        if q.prediction and not show_pred and not qids:
             continue
         if q.stage != stage_open:
             stage_open = q.stage
@@ -581,10 +670,12 @@ def build_report(res, path: Union[str, Path], title: Optional[str] = None,
     doc = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>{_e(title)}</title><style>{CSS}</style>
 <script src="{FORCE_GRAPH_CDN}"></script></head>
-<body>{NET_JS}{FG_JS}{KT_JS}<div class="wrap">
+<body>{NET_JS}{FG_JS}{KT_JS}{TV_JS}<div class="wrap">
 <h1>{_e(title)}</h1>
 <p class="mut">{n} papers · {span} · best S3 threshold {thr} ·
 {int(res.papers['community'].notna().sum())} clustered papers in {len(res.communities())} communities · generated {date.today()} with s3-bibliometric</p>
+<div class="tv-global">Show results as <button type="button" data-v="chart" onclick="s3TVAll('chart')">Charts</button><button type="button" data-v="table" onclick="s3TVAll('table')">Tables</button></div>
+<script>document.querySelectorAll('.tv-global button').forEach(x=>x.classList.toggle('on',x.dataset.v===s3TVPref()));</script>
 <nav>{''.join(nav)}</nav>
 {''.join(body)}
 <h2>Planned analyses</h2><ul>{planned}</ul>
