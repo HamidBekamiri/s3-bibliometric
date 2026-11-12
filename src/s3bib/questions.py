@@ -33,6 +33,7 @@ STAGES = {
     4: "Evolution",
     5: "Actors",
     6: "Interdisciplinarity",
+    7: "Prediction",
 }
 
 
@@ -1078,6 +1079,68 @@ def q_integration_trend(res) -> Answer:
 # ===========================================================================
 # Catalogue (ranked: the order is the guided pipeline)
 # ===========================================================================
+def q_predict(res) -> Answer:
+    """Temporal link prediction: does S3 rank the earlier papers a new paper will cite?"""
+    from .predict import citation_prediction
+    a = Answer("Q24", "")
+    r = citation_prediction(res)
+    if r is None:
+        a.findings.append("Too few new papers cite earlier papers in the corpus to test prediction "
+                          "(needs at least 10 citing papers in the last 5 years).")
+        return a
+    t = r["table"].set_index("method")
+    k = r["k"]
+    s3 = t.loc["S3 similarity (text only)"]
+    pop = t.loc["Popularity (citations up to split year)"]
+    a.findings.append(
+        f"Split: papers up to {r['split']} are known; {r['new_papers']} papers published {r['test']} "
+        f"make {r['citations']} citations to the {r['candidates']} earlier papers. For each new paper, every earlier "
+        f"paper is ranked and checked against what it really cites (chance: "
+        f"{r['base_rate']:.2%} of pairs are citations).")
+    a.findings.append(
+        f"S3 similarity alone, from title and abstract only, ranks a cited paper above a non-cited one "
+        f"{s3['ROC AUC']:.0%} of the time (ROC AUC {s3['ROC AUC']:.2f}; random 0.50). "
+        f"Its top {k} contain {s3[f'recall@{k}']:.0%} of a new paper's in-corpus citations on average "
+        f"(popularity: {pop[f'recall@{k}']:.0%}, AUC {pop['ROC AUC']:.2f}).")
+    combo = "S3 + popularity (fitted on earlier years)"
+    if combo in t.index:
+        c = t.loc[combo]
+        a.findings.append(
+            f"Combining S3 with popularity, fitted on the previous 5 years only, "
+            f"gives AUC {c['ROC AUC']:.2f} and recall@{k} {c[f'recall@{k}']:.0%}: "
+            + ("content and popularity add up." if c["ROC AUC"] > max(s3["ROC AUC"], pop["ROC AUC"]) + 0.005
+               else "popularity adds little beyond content.")
+            + (f" At the very top, popularity alone is better (its first-ranked paper is cited "
+               f"{pop['hit@1']:.0%} of the time vs {c['hit@1']:.0%}): new papers cite the field's classics first."
+               if pop["hit@1"] > c["hit@1"] + 0.02 else ""))
+    bc = "Bibliographic coupling (needs the new paper's references)"
+    if bc in t.index:
+        b = t.loc[bc]
+        a.findings.append(
+            f"For comparison, bibliographic coupling reaches AUC {b['ROC AUC']:.2f} (recall@{k} "
+            f"{b[f'recall@{k}']:.0%}), but it needs the new paper's own reference list, so it cannot "
+            f"forecast. S3 needs only the text.")
+    if r["linked"] and r["linked"]["pairs"]:
+        L = r["linked"]
+        a.findings.append(
+            f"Of the {L['pairs']} (new paper, earlier paper) pairs above the S3 threshold "
+            f"{L['threshold']:.2f}, {L['cited'] / L['pairs']:.0%} became citations, "
+            f"{L['cited'] / L['pairs'] / max(r['base_rate'], 1e-12):.0f}× the chance rate: S3 links point "
+            f"to where citations go, and the uncited ones are candidates for Q11's knowledge gaps.")
+    a.findings.append("Citations are " + ("exact (Scopus API)." if res.citation_source == "scopus_api" else
+                      "matched from the References text; with exact Scopus citations the test is cleaner."))
+    a.tables["Citation prediction: new papers vs earlier papers"] = r["table"]
+    a.chart = {"type": "line", "title": f"Recall@k: share of a new paper's citations among its top-k "
+                                        f"ranked earlier papers ({r['test']})",
+               "x": r["ks"], "x_labels": [str(x) for x in r["ks"]],
+               "series": {m.split(" (")[0]: v for m, v in r["curves"].items()},
+               "x_label": "k (top-ranked earlier papers)"}
+    a.charts.append({"type": "bar", "title": "ROC AUC by method (0.5 = chance)",
+                     "labels": [m.split(" (")[0] for m in r["table"]["method"]],
+                     "values": r["table"]["ROC AUC"].tolist()})
+    return a
+
+
 QUESTIONS: List[Question] = [
     Question("Q1", 1, "Essential", "What similarity threshold structures this field best?",
              "Shows the S3 threshold choice is data-driven, not arbitrary.",
@@ -1143,6 +1206,10 @@ QUESTIONS: List[Question] = [
              "Spearman: integration vs citations per year", ("years", "impact"), q_integration_impact),
     Question("Q23", 6, "Optional", "Is the field becoming more interdisciplinary?",
              "Trend of integration over time.", "Mean integration per year", ("years",), q_integration_trend),
+    Question("Q24", 7, "Recommended", "Does S3 similarity predict which earlier papers new papers will cite?",
+             "Predictive validation of S3: content similarity now, citations later.",
+             "Temporal link prediction (last 5 years vs earlier papers): ROC AUC, MAP, recall@10 for "
+             "S3, popularity, both, and bibliographic coupling", ("citations", "years"), q_predict),
 ]
 _BY_ID = {q.qid: q for q in QUESTIONS}
 

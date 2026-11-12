@@ -62,7 +62,7 @@ def _bar(spec: Dict[str, Any]) -> str:
     return "".join(out)
 
 
-def _axes(xs, lo, hi, w, h, l, r, t, b):
+def _axes(xs, lo, hi, w, h, l, r, t, b, labels=None):
     X = lambda x: l + (x - xs[0]) / ((xs[-1] - xs[0]) or 1) * (w - l - r)
     Y = lambda y: t + (1 - (y - lo) / ((hi - lo) or 1)) * (h - t - b)
     out = []
@@ -70,9 +70,10 @@ def _axes(xs, lo, hi, w, h, l, r, t, b):
         yv = lo + (hi - lo) * k / 4
         out.append(f'<line x1="{l}" x2="{w - r}" y1="{Y(yv):.1f}" y2="{Y(yv):.1f}" class="grid"/>'
                    f'<text x="{l - 6}" y="{Y(yv) + 4:.1f}" text-anchor="end" class="val">{yv:.3g}</text>')
-    step = max(1, len(xs) // 8)
-    for x in xs[::step]:
-        out.append(f'<text x="{X(x):.1f}" y="{h - 12}" text-anchor="middle" class="val">{x:g}</text>')
+    step = 1 if labels else max(1, len(xs) // 8)
+    for k in range(0, len(xs), step):
+        lab = _e(labels[k]) if labels else f"{xs[k]:g}"
+        out.append(f'<text x="{X(xs[k]):.1f}" y="{h - 12}" text-anchor="middle" class="val">{lab}</text>')
     return X, Y, out
 
 
@@ -82,14 +83,16 @@ def _legend(items) -> str:
 
 
 def _line(spec: Dict[str, Any]) -> str:
-    xs = [float(x) for x in spec["x"]]
+    """spec["x_labels"] = evenly spaced categories (e.g. k = 1, 2, 5, 10, ...)."""
+    labels = spec.get("x_labels")
+    xs = [float(k) for k in range(len(labels))] if labels else [float(x) for x in spec["x"]]
     series = list(spec["series"].items())[:10]
     if len(xs) < 2 or not series:
         return ""
     w, h, l, r, t, b = 640, 260, 48, 16, 18, 34
     ys = [float(v) for _, s in series for v in s]
     lo, hi = min(0.0, min(ys)), max(ys) or 1.0
-    X, Y, out = _axes(xs, lo, hi, w, h, l, r, t, b)
+    X, Y, out = _axes(xs, lo, hi, w, h, l, r, t, b, labels)
     out.insert(0, f'<svg viewBox="0 0 {w} {h}" class="chart" role="img" aria-label="{_e(spec.get("title"))}">')
     cids = spec.get("color_ids")
     colors = [_col(cids[k]) if cids else PALETTE[k % len(PALETTE)] for k in range(len(series))]

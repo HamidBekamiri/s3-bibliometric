@@ -312,3 +312,17 @@ def test_network_levels(res, df, tmp_path):
     assert "two_mode_paper_author_graphml" in files and not any("reference" in k for k in files)
     files = res.export_networks(tmp_path / "ref", formats=("csv",), two_mode_kinds=["reference"])
     assert "two_mode_paper_reference_edges_csv" in files
+
+
+def test_citation_prediction(res):
+    """Q24 on real data: S3 similarity ranks the earlier papers that new papers cite."""
+    from s3bib.predict import citation_prediction
+    r = citation_prediction(res)
+    t = r["table"].set_index("method")
+    assert r["test"] == "2019-2023" and r["new_papers"] >= 10
+    s3 = t.loc["S3 similarity (text only)"]
+    assert s3["ROC AUC"] > 0.7 > t.loc["Random", "ROC AUC"]
+    assert {"forecast", "reference point", "baseline"} == set(t["type"])
+    assert r["table"].equals(citation_prediction(res)["table"])  # seeded: same result every run
+    a = res.answer("Q24")
+    assert "ROC AUC" in a.findings[1] and a.chart["type"] == "line"

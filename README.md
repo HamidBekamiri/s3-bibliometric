@@ -93,7 +93,7 @@ S3 answers its questions from three levels of network. You can export each of th
 | Level | Nodes | Ties | Questions |
 |---|---|---|---|
 | **One-mode** | papers | SIMILAR_TO (S3 ≥ threshold) | Q1–Q3, Q5–Q7, Q9, Q12–Q13, Q21–Q23 |
-| **One-mode, multiplex** | papers | SIMILAR_TO + CITES | Q4, Q8, Q10, Q11 |
+| **One-mode, multiplex** | papers | SIMILAR_TO + CITES | Q4, Q8, Q10, Q11, Q24 |
 | **Two-mode** | papers + authors, keywords, journals, institutions, countries, funders or references | AUTHORED_BY, HAS_KEYWORD, … | Q14–Q16, Q19, Q20; co-citation and bibliographic coupling (Q4) are projections of the paper–reference network |
 | **Knowledge graph** | all of the above + communities | all tie types + IN_COMMUNITY, LOCATED_IN | Q17, Q18 |
 
@@ -109,7 +109,7 @@ res.export_networks("networks/")      # node/edge CSVs (Neo4j, igraph) + GraphML
                                       # paper-reference network
 ```
 
-## The guided pipeline: 23 research questions
+## The guided pipeline: 24 research questions
 
 Every analysis answers one research question. Go through them in order, or jump to the
 ones you need. Questions whose data is missing from your export are skipped and say why.
@@ -122,6 +122,7 @@ ones you need. Questions whose data is missing from your export are skipped and 
 | **4. Evolution** | Q13 Emerging, growing and declining communities · Q14 Rising and fading concepts |
 | **5. Actors** | Q15 Leading authors (RFI) · Q16 Broker authors · Q17 Collaboration gaps · Q18 Countries and institutions · Q19 Journals · Q20 Funders |
 | **6. Interdisciplinarity** | Q21 How interdisciplinary each community is (Rao-Stirling with S3 distances) · Q22 Are interdisciplinary papers cited more? · Q23 Is the field becoming more interdisciplinary? |
+| **7. Prediction** | Q24 Does S3 similarity predict which earlier papers new papers will cite? (temporal link prediction: the last 5 years against earlier papers; S3 vs popularity, both combined, and bibliographic coupling) |
 
 ```python
 res.questions()              # the ranked list, and which ones your data supports

@@ -49,7 +49,7 @@ mcp = _Server(
         "Typical flow: run_s3_analysis on a Scopus CSV -> enrich_citations if the user wants "
         "exact citations -> get_community for each main "
         "community and save_community_labels with short labels -> list_questions shows "
-        "the ranked research questions (Q1-Q23, in 6 stages) this dataset can answer -> "
+        "the ranked research questions (Q1-Q24, in 7 stages) this dataset can answer -> "
         "answer_question for the ones the user cares about, in rank order -> "
         "build_report for one HTML report of all answers. Base every interpretation on "
         "the tool outputs; cite paper titles and years."
@@ -316,8 +316,8 @@ def export_networks(run_id: str, output_dir: Optional[str] = None) -> Dict[str, 
 
 @mcp.tool()
 def list_questions(run_id: str) -> List[Dict[str, Any]]:
-    """The ranked research questions of the S3 method (Q1-Q23) in 6 stages: trust the map,
-    map the field, knowledge flows, evolution, actors, interdisciplinarity. Shows priority
+    """The ranked research questions of the S3 method (Q1-Q24) in 7 stages: trust the map,
+    map the field, knowledge flows, evolution, actors, interdisciplinarity, prediction. Shows priority
     and whether this dataset has the columns each question needs."""
     t = _get(run_id).questions()
     return json.loads(t.to_json(orient="records"))
