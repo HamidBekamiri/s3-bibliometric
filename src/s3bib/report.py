@@ -207,7 +207,8 @@ def _network(spec: Dict[str, Any]) -> str:
     Falls back to a built-in canvas map when the library cannot be loaded (offline)."""
     _NET_N[0] += 1
     nid = f"s3net{_NET_N[0]}"
-    data = json.dumps({"nodes": spec["nodes"], "edges": spec["edges"], "palette": PALETTE, "grey": GREY},
+    data = json.dumps({"nodes": spec["nodes"], "edges": spec["edges"], "palette": PALETTE, "grey": GREY,
+                       "names": {str(g["id"]): g["name"] for g in spec["legend"]}},
                       separators=(",", ":")).replace("</", "<\\/")
     legend = "".join(f'<button type="button" data-c="{g["id"]}"><i style="background:{_col(g["id"])}"></i>'
                      f'{_e(g["name"])} <span class="mut">({g["n"]})</span></button>' for g in spec["legend"])
@@ -222,6 +223,7 @@ def _network(spec: Dict[str, Any]) -> str:
             f'<div class="fg-bar"><button type="button" class="fg-play">Play</button>'
             f'<span>{lo}</span><input type="range" min="{lo}" max="{hi}" value="{hi}" aria-label="Show papers up to year">'
             f'<span>{hi}</span><b class="fg-year">{hi}</b><span class="fg-sep"></span>'
+            f'<button type="button" class="fg-names on" aria-pressed="true">Names</button>'
             f'<button type="button" class="fg-theme">Light</button>'
             f'<button type="button" class="fg-fit">Fit</button></div>'
             f'<div class="fg-main"><div class="fg-canvas" aria-label="{_e(spec.get("title"))}"></div>'
@@ -246,7 +248,7 @@ function s3FG(id){
   const nodes=d.nodes.map((n,i)=>({id:i,x:n[0]*600,y:n[1]*600,community:n[2],val:Math.max(1,(n[3]/2)**2),
     title:n[4],year:n[5],citations:n[6],cname:n[7],author:n[8]||'',abstract:n[9]||''}));
   const links=d.edges.map(([a,b])=>({source:a,target:b}));
-  const maxY=+range.max; let year=maxY, hl=null, dark=true, timer=null, moved=false;
+  const maxY=+range.max; let year=maxY, hl=null, dark=true, timer=null, moved=false, names=true;
   const shown=n=>!n.year||n.year<=year;
   const ends=l=>[typeof l.source==='object'?l.source:nodes[l.source],typeof l.target==='object'?l.target:nodes[l.target]];
   const fade=(c,on)=>on?c:c+'22';
@@ -254,6 +256,19 @@ function s3FG(id){
     .nodeColor(n=>fade(col(n.community),hl===null||n.community===hl))
     .linkColor(()=>dark?'rgba(255,255,255,0.15)':'rgba(0,0,0,0.15)')
     .nodeVisibility(shown).linkVisibility(l=>{const [a,b]=ends(l);return shown(a)&&shown(b);})
+    .onRenderFramePost((ctx,k)=>{if(!names)return;const acc={};
+      for(const n of nodes){if(n.community<0||!shown(n)||n.x==null)continue;const a=acc[n.community]??=[0,0,0];a[0]+=n.x;a[1]+=n.y;a[2]++;}
+      const fs=13/k;ctx.font=`600 ${fs}px system-ui,-apple-system,sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.lineJoin='round';ctx.lineWidth=3.5/k;
+      const lh=fs*1.35, placed=[];   // labels that would overlap are moved down, one line at a time
+      const labs=Object.keys(acc).filter(c=>d.names[c]).map(c=>{const [sx,sy,m]=acc[c];
+        return {c,t:d.names[c],x:sx/m,y:sy/m-14/k,w:ctx.measureText(d.names[c]).width};}).sort((a,b)=>a.y-b.y);
+      for(const L of labs){let tries=0;
+        while(tries++<12&&placed.some(P=>Math.abs(P.x-L.x)<(P.w+L.w)/2+4/k&&Math.abs(P.y-L.y)<lh))L.y+=lh;
+        placed.push(L);const on=hl===null||+L.c===hl;
+        ctx.globalAlpha=on?1:0.2;ctx.strokeStyle=dark?'rgba(0,0,0,0.85)':'rgba(255,255,255,0.9)';
+        ctx.fillStyle=dark?'#ffffff':'#111111';ctx.strokeText(L.t,L.x,L.y);ctx.fillText(L.t,L.x,L.y);}
+      ctx.globalAlpha=1;})
     .nodeLabel(()=>'').backgroundColor('#000000').cooldownTicks(100).enableNodeDrag(true)
     .onEngineStop(()=>{if(!moved)g.zoomToFit(400,30,shown);})
     .onNodeHover(n=>{el.style.cursor=n?'pointer':null;
@@ -284,6 +299,8 @@ function s3FG(id){
     timer=setInterval(()=>{if(year>=maxY)return stop();setYear(year+1);},800);});
   box.querySelector('.fg-theme').addEventListener('click',e=>{dark=!dark;box.classList.toggle('dark',dark);
     e.target.textContent=dark?'Light':'Dark';g.backgroundColor(dark?'#000000':'#ffffff').linkColor(g.linkColor());});
+  box.querySelector('.fg-names').addEventListener('click',e=>{names=!names;e.target.classList.toggle('on',names);
+    e.target.setAttribute('aria-pressed',names);g.nodeColor(g.nodeColor());});
   box.querySelector('.fg-fit').addEventListener('click',()=>g.zoomToFit(400,30,shown));
   document.querySelectorAll('#'+id+'-legend button').forEach(b=>b.addEventListener('click',()=>{
     const c=+b.dataset.c;hl=hl===c?null:c;document.querySelectorAll('#'+id+'-legend button').forEach(x=>
@@ -312,6 +329,10 @@ function s3Net(id){
     for(let i=0;i<N.length;i++){const n=N[i],on=hl===null||n[2]===hl;
       ctx.globalAlpha=on?0.92:0.1;ctx.fillStyle=col(n[2]);ctx.beginPath();
       ctx.arc(P[i][0],P[i][1],n[3]*(i===hover?1.8:1)*Math.sqrt(scale),0,6.2832);ctx.fill();}
+    if(d.names){const acc={};N.forEach((n,i)=>{if(n[2]<0)return;const a=acc[n[2]]??=[0,0,0];a[0]+=P[i][0];a[1]+=P[i][1];a[2]++;});
+      ctx.font='600 12px system-ui,-apple-system,sans-serif';ctx.textAlign='center';ctx.lineWidth=3;ctx.lineJoin='round';
+      for(const c in acc){const t=d.names[c];if(!t)continue;const [x,y,m]=acc[c];ctx.globalAlpha=hl===null||+c===hl?1:0.2;
+        ctx.strokeStyle='rgba(255,255,255,0.9)';ctx.fillStyle='#111';ctx.strokeText(t,x/m,y/m-10);ctx.fillText(t,x/m,y/m-10);}}
     ctx.globalAlpha=1;}
   function zoom(f,mx,my){if(f===0){scale=1;ox=0;oy=0;draw();return;}
     mx=mx??W/2;my=my??H/2;const ns=Math.min(40,Math.max(0.5,scale*f));
@@ -356,7 +377,8 @@ def _ktree(spec: Dict[str, Any]) -> str:
     return (f'<div class="kt-ctl" id="{kid}-ctl">Links: {btn("cit", "Citations")}{btn("sim", "Similarity")}'
             f'{btn("both", "Both")} <label>Minimum links <input type="number" min="1" value="2" '
             f'id="{kid}-min"></label></div>'
-            f'<div class="tw kt"><svg id="{kid}" class="ktree" role="img" aria-label="{_e(spec.get("title"))}"></svg></div>'
+            f'<div class="tw kt"><div class="kt-wrap"><div class="kt-names" id="{kid}-names"></div>'
+            f'<svg id="{kid}" class="ktree" role="img" aria-label="{_e(spec.get("title"))}"></svg></div></div>'
             f'<div class="legend net-legend" id="{kid}-legend">{legend}</div>'
             f'<script type="application/json" id="{kid}-data">{data}</script>'
             f'<script>s3KTree("{kid}","{mode}")</script>')
@@ -379,6 +401,7 @@ function s3KTree(id, mode){
   const el=(t,a,p)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);(p||svg).appendChild(e);return e;};
   function draw(){
     svg.textContent='';
+    document.querySelectorAll('#'+id+'-names .kt-name').forEach((e,k)=>e.classList.toggle('off',hl!==null&&d.communities[k]!==hl));
     d.windows.forEach((w,k)=>{const t=el('text',{x:X(k)+nw/2,y:18,'text-anchor':'middle',class:'lab'});t.textContent=w;});
     const wt=l=>mode==='cit'?l[4]:mode==='sim'?l[5]:l[4]+l[5];
     const L=d.links.filter(l=>wt(l)>=minw); const mx=Math.max(1,...L.map(wt));
@@ -402,8 +425,12 @@ function s3KTree(id, mode){
   document.querySelectorAll('#'+id+'-legend button').forEach(b=>b.addEventListener('click',()=>{
     const c=+b.dataset.c;hl=hl===c?null:c;document.querySelectorAll('#'+id+'-legend button').forEach(x=>
       x.classList.toggle('off',hl!==null&&+x.dataset.c!==hl));draw();}));
+  const nb=document.getElementById(id+'-names'); nb.style.height=H+'px';
+  d.communities.forEach(c=>{const e=document.createElement('div');e.className='kt-name';e.style.top=(Y(c)-rowH/2)+'px';
+    e.style.height=rowH+'px';e.style.borderLeftColor=col(c);e.textContent=name(c);e.title=name(c);
+    e.addEventListener('click',()=>document.querySelector('#'+id+'-legend button[data-c="'+c+'"]').click());nb.appendChild(e);});
   draw();
-  const box=svg.parentElement; box.scrollLeft=box.scrollWidth;
+  const box=svg.closest('.tw'); box.scrollLeft=box.scrollWidth;
 }
 </script>
 """
@@ -480,6 +507,7 @@ footer{margin-top:40px;font-size:.85rem;color:var(--mut)}
 .fg.dark .fg-bar button{background:#444;color:#fff}
 .fg-bar .fg-play,.fg.dark .fg-bar .fg-play{background:#2ca02c;color:#fff;min-width:72px}
 .fg-bar .fg-play.on,.fg.dark .fg-bar .fg-play.on{background:#d62728}
+.fg-bar .fg-names.on,.fg.dark .fg-bar .fg-names.on{background:var(--acc);color:#fff}
 .fg-year{background:#ddd;color:#000;padding:2px 8px;border-radius:4px;min-width:3.2em;text-align:center}
 .fg.dark .fg-year{background:#333;color:#fff}
 .fg-sep{border-left:1px solid #ccc;height:22px}.fg.dark .fg-sep{border-color:#444}
@@ -499,6 +527,10 @@ footer{margin-top:40px;font-size:.85rem;color:var(--mut)}
 @media (max-width:640px){.fg-side{position:absolute;right:0;top:0;bottom:0;max-width:85%}}
 .kt{border:1px solid var(--line);border-radius:8px;background:var(--bg)}
 .ktree .lab{font-size:12px;fill:var(--fg)}
+.kt-wrap{display:flex;width:max-content}
+.kt-names{position:sticky;left:0;z-index:1;width:190px;flex:none;background:var(--bg);border-right:1px solid var(--line)}
+.kt-name{position:absolute;left:0;right:0;display:flex;align-items:center;padding:0 8px;border-left:4px solid;font-size:.78rem;line-height:1.2;color:var(--fg);cursor:pointer;overflow:hidden}
+.kt-name.off{opacity:.3}
 :root{--kt-link:#98a4aa}
 .kt-ctl{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:.85rem;color:var(--mut);margin-bottom:6px}
 .kt-ctl button{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:5px;padding:2px 10px;cursor:pointer}

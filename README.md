@@ -86,6 +86,29 @@ Community colours are the same in every chart.
 kt = res.knowledge_tree(window_years=5)   # {"windows", "nodes", "links"} as DataFrames
 ```
 
+## The networks behind S3: one-mode, two-mode, knowledge graph
+
+S3 answers its questions from three levels of network. You can export each of them:
+
+| Level | Nodes | Ties | Questions |
+|---|---|---|---|
+| **One-mode** | papers | SIMILAR_TO (S3 ≥ threshold) | Q1–Q3, Q5–Q7, Q9, Q12–Q13, Q21–Q23 |
+| **One-mode, multiplex** | papers | SIMILAR_TO + CITES | Q4, Q8, Q10, Q11 |
+| **Two-mode** | papers + authors, keywords, journals, institutions, countries, funders or references | AUTHORED_BY, HAS_KEYWORD, … | Q14–Q16, Q19, Q20; co-citation and bibliographic coupling (Q4) are projections of the paper–reference network |
+| **Knowledge graph** | all of the above + communities | all tie types + IN_COMMUNITY, LOCATED_IN | Q17, Q18 |
+
+Communities are not in the data: S3 derives them from the one-mode similarity network. The
+knowledge graph adds them as nodes so that questions across communities become graph queries.
+
+```python
+res.networks()                        # node and tie types and counts per level
+G = res.network("kg")                 # networkx MultiDiGraph; also "similarity", "citation",
+                                      # "one-mode", "paper-author", "paper-keyword", ...
+res.export_networks("networks/")      # node/edge CSVs (Neo4j, igraph) + GraphML (Gephi)
+                                      # add two_mode_kinds=[..., "reference"] for the large
+                                      # paper-reference network
+```
+
 ## The guided pipeline: 23 research questions
 
 Every analysis answers one research question. Go through them in order, or jump to the
@@ -158,6 +181,7 @@ You can also use the built-in **`s3_report`** prompt. The first run downloads th
 | `search_papers` | Semantic search inside the corpus |
 | `save_community_labels` | Store the labels the assistant proposes |
 | `export_results` | Write CSV outputs |
+| `export_networks` | One-mode, two-mode and knowledge-graph networks as CSV + GraphML |
 
 Runs are saved in `~/s3bib_runs` (change it with the `S3BIB_HOME` environment variable).
 

@@ -79,7 +79,8 @@ def test_title_matching_recovers_real_citations(res, df):
     ids = df.set_index("EID")["Referenced IDs"].fillna("")
     real = {(i, eids.index(r)) for i, e in enumerate(eids) for r in ids[e].split("; ") if r in eids}
     found = set(map(tuple, res.citation_pairs))
-    assert len(real & found) / len(real) >= 0.8
+    assert len(real & found) / len(real) >= 0.95
+    assert found <= real  # same-title papers are told apart by the year in the reference
     # every link found cites a paper whose title really is in the citing paper's references
     titles = res.papers["title"].map(_norm_text).tolist()
     real_titles = {(i, titles[j]) for i, j in real}
@@ -191,6 +192,19 @@ def test_near_duplicates_by_s3(df, lookup):
     assert pipeline.near_duplicates(pair, emb, threshold=0.98)[0] == []  # default keeps both
 
 
+def test_graphs_show_community_names(res):
+    from s3bib.questions import _display_name, _network_spec
+    from s3bib.ktree import ktree_spec
+    terms = [t for t, _ in res.top_terms(0, 3)]
+    assert _display_name(res, 0) == "C0 " + " · ".join(terms)  # unlabelled: top c-TF-IDF terms
+    res.labels = {0: "Absorptive capacity"}
+    try:
+        assert _network_spec(res)["legend"][0]["name"] == "C0 Absorptive capacity"
+        assert ktree_spec(res)["names"][0] == "C0 Absorptive capacity"
+    finally:
+        res.labels = {}
+
+
 def test_knowledge_tree(res):
     kt = res.knowledge_tree(window_years=5)
     shown = res.papers[res.papers["community"].isin(kt["communities"]) & res.papers["year"].notna()]
@@ -255,3 +269,46 @@ def test_scopus_access_error(res, monkeypatch):
         s3bib.enrich_citations(res)  # no key at all
     with pytest.raises(s3bib.ScopusAccessError):
         s3bib.enrich_citations(res, api_key="x", session=Denied(), cache_dir=None, pause=0)
+
+
+def test_network_levels(res, df, tmp_path):
+    from s3bib import networks as N
+    # one-mode: the S3 graph and the in-corpus citations, with typed paper ids
+    nodes, edges = N.one_mode(res)
+    assert set(nodes["type"]) == {"paper"} and len(nodes) == len(res.papers)
+    assert (edges["type"] == "SIMILAR_TO").sum() == res.graph().number_of_edges()
+    assert (edges["type"] == "CITES").sum() == len(res.citation_pairs)
+    cites = edges[edges["type"] == "CITES"]
+    assert f"paper:{CL}" in set(cites["target"])  # Cohen & Levinthal is cited inside the corpus
+    sim = edges[edges["type"] == "SIMILAR_TO"]
+    year = dict(zip(nodes["id"], nodes["year"]))
+    assert all(year[a] <= year[b] for a, b in zip(sim["source"], sim["target"]))  # earlier -> later
+
+    # two-mode: paper-author ties match the Authors column
+    n2, e2 = N.two_mode(res, "author")
+    n_auth = sum(len(set(a.split("; "))) for a in df["Authors"].dropna())
+    assert len(e2) == n_auth and set(n2["type"]) == {"paper", "author"}
+    assert set(e2["type"]) == {"AUTHORED_BY"}
+    _, e3 = N.two_mode(res, "reference")
+    assert len(e3) > 0
+
+    # knowledge graph: communities and entity types together
+    kn, ke = N.knowledge_graph(res)
+    assert {"paper", "community", "author", "keyword", "journal", "institution", "country", "funder"} <= set(kn["type"])
+    assert {"SIMILAR_TO", "CITES", "IN_COMMUNITY", "AUTHORED_BY", "LOCATED_IN", "FUNDED_BY"} <= set(ke["type"])
+    assert (ke["type"] == "IN_COMMUNITY").sum() == res.papers["community"].notna().sum()
+    assert set(ke["source"]) | set(ke["target"]) <= set(kn["id"])  # no dangling ties
+
+    G = res.network("paper-journal")
+    assert G.number_of_edges() == res.papers["source"].notna().sum()
+    with pytest.raises(ValueError):
+        res.network("paper-unicorn")
+    assert list(res.networks()["level"])[0] == "one-mode"
+
+    files = res.export_networks(tmp_path / "net")
+    import networkx as nx
+    kg = nx.read_graphml(files["knowledge_graph_graphml"])
+    assert kg.number_of_nodes() == len(kn)
+    assert "two_mode_paper_author_graphml" in files and not any("reference" in k for k in files)
+    files = res.export_networks(tmp_path / "ref", formats=("csv",), two_mode_kinds=["reference"])
+    assert "two_mode_paper_reference_edges_csv" in files

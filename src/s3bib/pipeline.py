@@ -405,20 +405,40 @@ def citation_edges(df: pd.DataFrame) -> List[tuple[int, int]]:
     if df["references"].isna().all() or df["eid"].isna().all():
         return []
     fp = df["title"].map(_norm_text).str[:60]
-    refs = df["references"].fillna("").map(_norm_text)
-    fp_to_idx: Dict[str, int] = {}
+    raw = df["references"].fillna("")
+    refs = raw.map(_norm_text)
+    fp_to_idx: Dict[str, List[int]] = {}
     for i, f in enumerate(fp):
         if f:
-            fp_to_idx[f] = i  # last one wins, as in the web app
+            fp_to_idx.setdefault(f, []).append(i)
     eids = df["eid"].tolist()
+    years = df["year"].tolist()
     edges = set()
     for i, r in enumerate(refs):
         if not r:
             continue
-        for f, j in fp_to_idx.items():
-            if f in r and eids[i] != eids[j]:
+        for f, js in fp_to_idx.items():
+            if f not in r:
+                continue
+            j = js[-1] if len(js) == 1 else _pick_by_year(f, js, raw.iat[i], years)
+            if eids[i] != eids[j]:
                 edges.add((i, j))
     return sorted(edges)
+
+
+def _pick_by_year(fp: str, candidates: List[int], references: str, years: List[Any]) -> int:
+    """Several corpus papers share a title (reprints, book chapters called 'Introduction'):
+    pick the one whose year appears in the citing reference, e.g. '(1990)'. Without a
+    matching year the last one wins, as in the S3 web app."""
+    from .questions import _split_refs
+    for ref in _split_refs(references):
+        if fp in _norm_text(ref):
+            m = re.findall(r"\((\d{4})[a-z]?\)", ref)
+            if m:
+                same = [j for j in candidates if pd.notna(years[j]) and int(years[j]) == int(m[-1])]
+                if same:
+                    return same[-1]
+    return candidates[-1]
 
 
 # --------------------------------------------------------------------------
@@ -462,6 +482,27 @@ class S3Result:
         from .questions import answer
         set_seed(self.config.seed)
         return answer(self, qid)
+
+    def network(self, kind: str = "kg"):
+        """One of the networks behind S3 as a networkx MultiDiGraph:
+        "similarity", "citation", "one-mode" (both tie types), "paper-author", "paper-keyword",
+        "paper-journal", "paper-institution", "paper-country", "paper-funder", "paper-reference"
+        (two-mode) or "kg" (knowledge graph). See s3bib.networks for the tables behind them."""
+        from .networks import network
+        return network(self, kind)
+
+    def networks(self) -> pd.DataFrame:
+        """What each network level contains: node and tie types and counts."""
+        from .networks import summary
+        return summary(self)
+
+    def export_networks(self, directory: Union[str, Path], formats=("csv", "graphml"),
+                        two_mode_kinds=None) -> Dict[str, str]:
+        """Write one-mode, two-mode and knowledge-graph networks as node/edge CSVs
+        (Neo4j, igraph) and GraphML (Gephi). The large paper-reference network is included
+        only when asked: two_mode_kinds=["author", ..., "reference"]."""
+        from .networks import export_networks
+        return export_networks(self, directory, two_mode_kinds=two_mode_kinds, formats=formats)
 
     def knowledge_tree(self, window_years: int = 5, n_communities: int = 15) -> Dict[str, Any]:
         """Communities per time window and the citation / similarity links between them

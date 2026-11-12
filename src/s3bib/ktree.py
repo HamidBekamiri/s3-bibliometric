@@ -86,7 +86,8 @@ def ktree_spec(res, window_years: int = 5, n_communities: int = 15) -> Optional[
     links = [[int(r.from_community), int(r.from_window), int(r.to_community), int(r.to_window),
               int(r.citations), int(r.similarity_links)] for r in kt["links"].itertuples()] \
         if not kt["links"].empty else []
-    names = {int(c): (f"C{c} {res.labels.get(c, '')}").strip() for c in kt["communities"]}
+    from .questions import _display_name
+    names = {int(c): _display_name(res, c) for c in kt["communities"]}
     return {"type": "ktree",
             "title": f"Knowledge tree: communities per {window_years}-year window, linked by citations "
                      f"and S3 similarity (earlier → later)",

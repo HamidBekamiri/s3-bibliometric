@@ -81,6 +81,18 @@ def _name(res, c) -> str:
     return f"C{c} {lab}".strip()
 
 
+def _display_name(res, c, n_terms: int = 3) -> str:
+    """Name shown on graphs: the saved label, or else the community's top c-TF-IDF terms."""
+    c = int(c)
+    lab = res.labels.get(c, "")
+    if not lab:
+        try:
+            lab = " · ".join(t for t, _ in res.top_terms(c, n_terms))
+        except Exception:  # pragma: no cover - no text for this community
+            lab = ""
+    return f"C{c} {lab}".strip()
+
+
 def _clustered(res) -> pd.DataFrame:
     return res.papers.dropna(subset=["community"])
 
@@ -239,17 +251,18 @@ def _network_spec(res, n_comms: int = 20, max_edges: int = 20000) -> Optional[Di
         arr = arr / (np.abs(arr).max() or 1) * radius[c]
         for i, xy in zip(ns, arr):
             pos[i] = centre[c] + xy
+    names = {c: _display_name(res, c) for c in comms}
     order = [i for c in comms for i in members[c]]
     idx = {i: k for k, i in enumerate(order)}
     cites = P["cited_by"].to_numpy()
     nodes = [[round(float(pos[i][0]), 4), round(float(pos[i][1]), 4),
               int(of[i]) if of[i] < res.config.top_n_communities else -1,
               round(float(2 + 1.4 * np.log1p(cites[i]) ** 0.9), 2),
-              str(P.at[i, "title"])[:140], _int(P.at[i, "year"]), int(cites[i]), _name(res, of[i]),
+              str(P.at[i, "title"])[:140], _int(P.at[i, "year"]), int(cites[i]), names[of[i]],
               _first_author(P.at[i, "authors"]), _clip(P.at[i, "abstract"], 900)]
              for i in order]
     edges = [[idx[u], idx[v]] for u, v in G.edges() if u in idx and v in idx][:max_edges]
-    legend = [{"id": int(c), "name": _name(res, c), "n": len(members[c])} for c in comms
+    legend = [{"id": int(c), "name": _display_name(res, c), "n": len(members[c])} for c in comms
               if c < res.config.top_n_communities]
     return {"type": "network", "title": f"S3 network map (paper Panel 1): {len(order)} papers in the "
                                         f"{len(comms)} largest communities; top {len(legend)} in colour",
@@ -943,18 +956,23 @@ def q_journals(res) -> Answer:
     return a
 
 
+def _funders(v) -> List[str]:
+    """Funder names from a Scopus funding cell ('NSFC, NSFC (71872...)' -> 'NSFC')."""
+    out = []
+    for f in _split(v):
+        name = re.sub(r",?\s*\([^)]*\)\s*$", "", f).strip()
+        parts = [x.strip() for x in name.split(",")]
+        if len(parts) > 1 and parts[-1].replace("-", "").isupper() and len(parts[-1]) <= 10:
+            parts = parts[:-1]
+        name = ", ".join(parts)
+        if len(name) > 3 and not name.isdigit():
+            out.append(name)
+    return out
+
+
 def q_funding(res) -> Answer:
     a = Answer("Q20", "")
-    rows = []
-    for i, v in res.papers["funding"].items():
-        for f in _split(v):
-            name = re.sub(r",?\s*\([^)]*\)\s*$", "", f).strip()
-            parts = [x.strip() for x in name.split(",")]
-            if len(parts) > 1 and parts[-1].replace("-", "").isupper() and len(parts[-1]) <= 10:
-                parts = parts[:-1]
-            name = ", ".join(parts)
-            if len(name) > 3 and not name.isdigit():
-                rows.append((i, name))
+    rows = [(i, name) for i, v in res.papers["funding"].items() for name in _funders(v)]
     if not rows:
         a.findings.append("No funding data in the export.")
         return a

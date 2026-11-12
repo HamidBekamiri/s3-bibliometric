@@ -302,6 +302,19 @@ def export_results(run_id: str, output_dir: Optional[str] = None) -> Dict[str, s
 
 
 @mcp.tool()
+def export_networks(run_id: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
+    """Export the networks behind S3 at three levels: one-mode (papers tied by S3 similarity
+    and/or citations), two-mode (papers + authors, keywords, journals, institutions,
+    countries, funders or references) and a knowledge graph (all node and tie types together,
+    with communities as nodes). Writes node/edge CSVs (Neo4j, igraph) and GraphML (Gephi)
+    to output_dir (default: the run folder) and returns the files and a summary of what
+    each network contains."""
+    res = _get(run_id)
+    files = res.export_networks(output_dir or (_run_dir(run_id) / "networks"))
+    return {"summary": json.loads(res.networks().to_json(orient="records")), "files": files}
+
+
+@mcp.tool()
 def list_questions(run_id: str) -> List[Dict[str, Any]]:
     """The ranked research questions of the S3 method (Q1-Q23) in 6 stages: trust the map,
     map the field, knowledge flows, evolution, actors, interdisciplinarity. Shows priority
