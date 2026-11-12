@@ -61,10 +61,25 @@ _COLUMNS = {
 # --------------------------------------------------------------------------
 # Config
 # --------------------------------------------------------------------------
+def set_seed(seed: int) -> None:
+    """Fix every random number generator S3 touches, so runs are reproducible."""
+    import os
+    import random
+    os.environ.setdefault("PYTHONHASHSEED", str(seed))
+    random.seed(seed)
+    np.random.seed(seed)
+    try:
+        import torch
+        torch.manual_seed(seed)
+        torch.use_deterministic_algorithms(True, warn_only=True)
+    except ImportError:  # pragma: no cover
+        pass
+
+
 @dataclass
 class S3Config:
-    model_name: str = "sentence-transformers/all-mpnet-base-v2"
-    thresholds: Sequence[float] = DEFAULT_THRESHOLDS
+    model_name: str = "sentence-transformers/all-mpnet-base-v2"  # or a key: "specter", "clip", ...
+    thresholds: Optional[Sequence[float]] = None  # None = 0.75-0.85 for mpnet, wider for other models
     temporal_mask: bool = True
     seed: int = 42
     batch_size: int = 32
@@ -75,6 +90,15 @@ class S3Config:
     community_method: str = "leiden"  # "leiden" (directed, as in the paper) or "louvain" (web app)
     threshold: Optional[float] = None  # fix the threshold instead of choosing it by SII
     mi_denominator: str = "retained"   # MI denominator: links made by retained papers, or "all" links
+    dedupe: bool = True                # remove duplicate records before the analysis
+    dedupe_threshold: float = 0.98     # S3 at or above this = the same paper (reprints, double indexing)
+
+    def __post_init__(self):
+        from .models import default_thresholds, resolve_model
+        self.model_name = resolve_model(self.model_name)
+        if self.thresholds is None:
+            self.thresholds = default_thresholds(self.model_name)
+        self.thresholds = tuple(round(float(t), 4) for t in self.thresholds)
 
 
 # --------------------------------------------------------------------------
@@ -97,8 +121,10 @@ def load_papers(
     source: Union[str, Path, pd.DataFrame],
     start_year: Optional[int] = None,
     end_year: Optional[int] = None,
+    drop_empty: bool = True,
 ) -> pd.DataFrame:
-    """Read a Scopus CSV/Excel export (or a DataFrame) into standard columns."""
+    """Read a Scopus CSV/Excel export (or a DataFrame) into standard columns.
+    Records with neither a title nor an abstract are dropped (drop_empty=True)."""
     if isinstance(source, pd.DataFrame):
         raw = source.copy()
     else:
@@ -123,11 +149,87 @@ def load_papers(
         df = df[df["year"] >= start_year]
     if end_year is not None:
         df = df[df["year"] <= end_year]
+    df["title"] = df["title"].str.strip()
+    df["abstract"] = df["abstract"].str.strip()
+    if drop_empty:
+        df = df[(df["title"] != "") | (df["abstract"] != "")]
     df = df.reset_index(drop=True)
     df["text"] = df["title"] + ". " + df["abstract"]
     if len(df) < 3:
         raise ValueError(f"Only {len(df)} papers after filtering; need at least 3.")
     return df
+
+
+def _removed_row(df: pd.DataFrame, i: int, reason: str, kept: Optional[int] = None) -> Dict[str, Any]:
+    return {"title": df.at[i, "title"], "year": _i(df.at[i, "year"]), "eid": df.at[i, "eid"],
+            "cited_by": int(df.at[i, "cited_by"]), "reason": reason,
+            "kept_title": df.at[kept, "title"] if kept is not None else None,
+            "kept_eid": df.at[kept, "eid"] if kept is not None else None}
+
+
+def _keep_order(df: pd.DataFrame, group: List[int]) -> List[int]:
+    """Within a group of duplicates keep the most cited record, then the earliest, then the first."""
+    return sorted(group, key=lambda i: (-int(df.at[i, "cited_by"]),
+                                        df.at[i, "year"] if pd.notna(df.at[i, "year"]) else 9999, i))
+
+
+def _groups(pairs: List[tuple], n: int) -> List[List[int]]:
+    parent = list(range(n))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    for a, b in pairs:
+        parent[find(a)] = find(b)
+    g: Dict[int, List[int]] = {}
+    for i in range(n):
+        g.setdefault(find(i), []).append(i)
+    return [v for v in g.values() if len(v) > 1]
+
+
+def exact_duplicates(df: pd.DataFrame) -> tuple[List[int], List[Dict[str, Any]]]:
+    """Rows that repeat another record: same EID, same title + abstract, or same DOI with
+    the same title (chapters of one edited book can share the book's DOI).
+    Returns (rows to drop, removal records)."""
+    title = df["title"].map(_norm_text)
+    text = (df["title"] + " " + df["abstract"]).map(_norm_text)
+    keys = {
+        "eid": df["eid"].astype(str).str.strip().str.lower(),
+        "text": text,
+        "doi": df["doi"].astype(str).str.strip().str.lower() + "|" + title,
+    }
+    pairs = []
+    for name, v in keys.items():
+        bad = v.isin(["", "nan", "none"]) | v.str.startswith(("nan|", "|", "none|"))
+        v = v[~bad]
+        for _, idx in v.groupby(v).groups.items():
+            idx = list(idx)
+            pairs += [(idx[0], j) for j in idx[1:]]
+    drop, removed = [], []
+    for g in _groups(pairs, len(df)):
+        keep, *rest = _keep_order(df, g)
+        for j in rest:
+            removed.append(_removed_row(df, j, "exact duplicate (same EID, DOI + title, or text)", keep))
+            drop.append(j)
+    return sorted(drop), removed
+
+
+def near_duplicates(df: pd.DataFrame, emb: np.ndarray, threshold: float) -> tuple[List[int], List[Dict[str, Any]]]:
+    """Papers whose S3 is >= threshold with another paper (reprints, the same paper indexed
+    twice). Returns (rows to drop, removal records)."""
+    S = emb @ emb.T
+    np.fill_diagonal(S, 0)
+    i, j = np.where(np.triu(S >= threshold, 1))
+    drop, removed = [], []
+    for g in _groups(list(zip(i.tolist(), j.tolist())), len(df)):
+        keep, *rest = _keep_order(df, g)
+        for r in rest:
+            removed.append({**_removed_row(df, r, f"near duplicate (S3 ≥ {threshold})", keep),
+                            "s3": round(float(S[min(r, keep), max(r, keep)]), 4)})
+            drop.append(r)
+    return sorted(drop), removed
 
 
 # --------------------------------------------------------------------------
@@ -331,6 +433,8 @@ class S3Result:
     config: S3Config
     citation_pairs: List[tuple[int, int]] = field(default_factory=list)
     labels: Dict[int, str] = field(default_factory=dict)  # human / LLM community labels
+    removed: pd.DataFrame = field(default_factory=pd.DataFrame)  # dropped records and why
+    citation_source: str = "references"  # "references" (title matching) or "scopus_api"
 
     # ---- graph & guided questions -----------------------------------------
     def s3(self, directed: bool = True) -> np.ndarray:
@@ -356,6 +460,7 @@ class S3Result:
         """Answer one question, e.g. res.answer("Q7"). Returns an Answer
         with .findings (sentences), .tables (DataFrames) and .chart."""
         from .questions import answer
+        set_seed(self.config.seed)
         return answer(self, qid)
 
     def report(self, path: Union[str, Path], title: Optional[str] = None) -> Path:
@@ -503,10 +608,12 @@ class S3Result:
         d = Path(directory).expanduser()
         d.mkdir(parents=True, exist_ok=True)
         self.papers.to_pickle(d / "papers.pkl")
+        self.removed.to_pickle(d / "removed.pkl")
         np.save(d / "embeddings.npy", self.embeddings)
         meta = {"scan": self.scan, "best": self.best, "config": asdict(self.config),
                 "citation_pairs": self.citation_pairs,
-                "labels": {str(k): v for k, v in self.labels.items()}}
+                "labels": {str(k): v for k, v in self.labels.items()},
+                "citation_source": self.citation_source}
         (d / "run.json").write_text(json.dumps(meta, indent=2, default=_json_default))
         return d
 
@@ -522,7 +629,9 @@ class S3Result:
                    embeddings=np.load(d / "embeddings.npy"),
                    scan=meta["scan"], best=meta["best"], config=cfg,
                    citation_pairs=[tuple(p) for p in meta["citation_pairs"]],
-                   labels={int(k): v for k, v in meta.get("labels", {}).items()})
+                   labels={int(k): v for k, v in meta.get("labels", {}).items()},
+                   removed=pd.read_pickle(d / "removed.pkl") if (d / "removed.pkl").exists() else pd.DataFrame(),
+                   citation_source=meta.get("citation_source", "references"))
 
     def export(self, directory: Union[str, Path]) -> Dict[str, str]:
         """Write human-friendly CSV/XLSX outputs."""
@@ -556,14 +665,28 @@ def run_s3(source: Union[str, Path, pd.DataFrame],
     """Run the full S3 pipeline on a Scopus export and return an S3Result."""
     cfg = config or S3Config()
     say = progress or (lambda s, p: log.info("%s (%.0f%%)", s, p * 100))
+    set_seed(cfg.seed)
 
     say("Loading papers", 0.0)
-    df = load_papers(source, cfg.start_year, cfg.end_year)
-    n = len(df)
+    df = load_papers(source, cfg.start_year, cfg.end_year, drop_empty=False)
+    empty = (df["title"] == "") & (df["abstract"] == "")
+    removed: List[Dict[str, Any]] = [_removed_row(df, i, "no title and no abstract") for i in df.index[empty]]
+    df = df[~empty].reset_index(drop=True)
 
-    say(f"Embedding {n} papers", 0.05)
+    # embed before de-duplicating, so the embedding cache is the same with and without it
+    say(f"Embedding {len(df)} papers", 0.05)
     emb = embed_texts(df["text"].tolist(), cfg.model_name, cfg.batch_size, cfg.cache_dir,
                       progress=lambda s, p: say(s, 0.05 + 0.45 * p))
+    if cfg.dedupe:
+        drop, rem = exact_duplicates(df)
+        removed += rem
+        keep = np.setdiff1d(np.arange(len(df)), drop)
+        df, emb = df.iloc[keep].reset_index(drop=True), emb[keep]
+        drop, rem = near_duplicates(df, emb, cfg.dedupe_threshold)
+        removed += rem
+        keep = np.setdiff1d(np.arange(len(df)), drop)
+        df, emb = df.iloc[keep].reset_index(drop=True), emb[keep]
+    n = len(df)
 
     say("Computing S3 matrix", 0.5)
     s3 = s3_matrix(emb)
@@ -621,7 +744,7 @@ def run_s3(source: Union[str, Path, pd.DataFrame],
 
     say("Done", 1.0)
     return S3Result(papers=df, embeddings=emb, scan=scan, best=best,
-                    config=cfg, citation_pairs=pairs)
+                    config=cfg, citation_pairs=pairs, removed=pd.DataFrame(removed))
 
 
 # --------------------------------------------------------------------------

@@ -42,7 +42,8 @@ class Answer:
     question: str
     findings: List[str] = field(default_factory=list)
     tables: Dict[str, pd.DataFrame] = field(default_factory=dict)
-    chart: Optional[Dict[str, Any]] = None  # {"type": "bar"|"line"|"heatmap", ...}
+    chart: Optional[Dict[str, Any]] = None  # {"type": "bar"|"line"|"heatmap"|"stack"|"sankey"|"network", ...}
+    charts: List[Dict[str, Any]] = field(default_factory=list)  # further charts for the same answer
 
     def __repr__(self) -> str:
         lines = [f"{self.qid}  {self.question}"] + [f"  - {f}" for f in self.findings]
@@ -193,6 +194,71 @@ def _semantic_integration(res) -> pd.Series:
     return res._rs
 
 
+def _network_spec(res, n_comms: int = 20, max_edges: int = 20000) -> Optional[Dict[str, Any]]:
+    """Paper-level S3 network map (paper Panel 1): communities are laid out first, then the
+    papers of each community around its centre. Deterministic (seeded)."""
+    G = res.graph()
+    P = res.papers
+    comms = _main_comms(res, n_comms)
+    if not comms:
+        return None
+    members = {c: list(P.index[(P["community"] == c).fillna(False)]) for c in comms}
+    of = {i: c for c, ns in members.items() for i in ns}
+    CG = nx.Graph()
+    CG.add_nodes_from(comms)
+    for u, v in G.edges():
+        cu, cv = of.get(u), of.get(v)
+        if cu is not None and cv is not None and cu != cv:
+            CG.add_edge(cu, cv, weight=CG.get_edge_data(cu, cv, {}).get("weight", 0) + 1)
+    seed = res.config.seed
+    cpos = nx.spring_layout(CG, seed=seed, weight="weight", k=2.2 / np.sqrt(len(comms)), iterations=300)
+    big = max(len(v) for v in members.values())
+    radius = {c: 0.06 + 0.32 * np.sqrt(len(members[c]) / big) for c in comms}
+    # push overlapping community circles apart; linked communities stay neighbours
+    centre = {c: np.asarray(cpos[c], dtype=float) * 2.6 for c in comms}
+    for _ in range(400):
+        moved = False
+        for a_i, a in enumerate(comms):
+            for b in comms[a_i + 1:]:
+                d = centre[b] - centre[a]
+                dist = float(np.hypot(*d)) or 1e-6
+                need = (radius[a] + radius[b]) * 1.15
+                if dist < need:
+                    push = d / dist * (need - dist) / 2
+                    centre[a] -= push
+                    centre[b] += push
+                    moved = True
+        if not moved:
+            break
+    pos = {}
+    for c, ns in members.items():
+        sub = G.subgraph(ns)
+        lay = nx.spring_layout(sub, seed=seed, iterations=80) if len(ns) > 1 else {ns[0]: np.zeros(2)}
+        arr = np.array([lay[i] for i in ns])
+        arr = arr - arr.mean(axis=0)
+        arr = arr / (np.abs(arr).max() or 1) * radius[c]
+        for i, xy in zip(ns, arr):
+            pos[i] = centre[c] + xy
+    order = [i for c in comms for i in members[c]]
+    idx = {i: k for k, i in enumerate(order)}
+    cites = P["cited_by"].to_numpy()
+    nodes = [[round(float(pos[i][0]), 4), round(float(pos[i][1]), 4),
+              int(of[i]) if of[i] < res.config.top_n_communities else -1,
+              round(float(2 + 1.4 * np.log1p(cites[i]) ** 0.9), 2),
+              str(P.at[i, "title"])[:140], _int(P.at[i, "year"]), int(cites[i]), _name(res, of[i])]
+             for i in order]
+    edges = [[idx[u], idx[v]] for u, v in G.edges() if u in idx and v in idx][:max_edges]
+    legend = [{"id": int(c), "name": _name(res, c), "n": len(members[c])} for c in comms
+              if c < res.config.top_n_communities]
+    return {"type": "network", "title": f"S3 network map (paper Panel 1): {len(order)} papers in the "
+                                        f"{len(comms)} largest communities; top {len(legend)} in colour",
+            "nodes": nodes, "edges": edges, "legend": legend}
+
+
+def _int(x):
+    return None if pd.isna(x) else int(x)
+
+
 # ===========================================================================
 # Stage 1 - Trust the map
 # ===========================================================================
@@ -225,8 +291,10 @@ def q_threshold(res) -> Answer:
                           "fields. Consider narrowing the search, or read the communities as the "
                           "field's tightest topic clusters.")
     a.tables["Threshold scan"] = scan.round(4)
-    a.chart = {"type": "line", "title": "SII by threshold", "x": scan["threshold"].tolist(),
-               "series": {"SII": scan["sii"].round(2).tolist()}, "x_label": "S3 threshold"}
+    a.chart = {"type": "line", "title": "Sensitivity Inclusion Index across thresholds (paper Fig. 3)",
+               "x": scan["threshold"].tolist(), "series": {"SII": scan["sii"].round(2).tolist()},
+               "x_label": "S3 threshold", "mark": b["threshold"],
+               "mark_label": f"{'fixed' if b.get('fixed') else 'best'} {b['threshold']:.2f}"}
     return a
 
 
@@ -389,8 +457,14 @@ def q_communities(res) -> Answer:
     cols = ["community", "label", "n_papers", "total_citations", "mean_citations",
             "year_min", "year_median", "year_max"]
     a.tables["Communities"] = c[cols].round(1)
-    a.chart = {"type": "bar", "title": "Papers per community",
-               "labels": [_name(res, x) for x in c["community"]], "values": c["n_papers"].tolist()}
+    top_n = res.config.top_n_communities
+    a.chart = {"type": "bar", "title": f"Community sizes in descending order (elbow plot, paper Fig. 4); "
+                                       f"the top {top_n} are highlighted",
+               "labels": [_name(res, x) for x in c["community"]], "values": c["n_papers"].tolist(),
+               "highlight": top_n, "max": 30, "color_ids": c["community"].tolist()}
+    net = _network_spec(res)
+    if net:
+        a.charts.append(net)
     return a
 
 
@@ -495,7 +569,9 @@ def q_flows(res) -> Answer:
     m = res.citation_metrics()
     C = res.citation_matrix()
     names = [_name(res, c) for c in C.index]
-    a.findings.append(f"{len(res.citation_pairs)} citation links were found inside the corpus.")
+    src = ("from the Scopus API (exact)" if res.citation_source == "scopus_api" else
+           "by matching titles in the References text (approximate; add a Scopus API key for exact links)")
+    a.findings.append(f"{len(res.citation_pairs)} citation links were found inside the corpus, {src}.")
     if not m.empty:
         mat = m.sort_values("qi", ascending=False).iloc[0]
         a.findings.append(f"The most self-referential (mature) community is {_name(res, mat.community)} "
@@ -510,8 +586,14 @@ def q_flows(res) -> Answer:
     a.tables["Community citation metrics (Table 1)"] = m.round(3)
     a.tables["Citation flows between communities (Table 2, rows cite columns)"] = C.set_axis(names, axis=0).set_axis(names, axis=1) \
         .reset_index().rename(columns={"index": "citing community"})
-    a.chart = {"type": "heatmap", "title": "Citations between communities (rows cite columns)",
+    a.chart = {"type": "heatmap", "title": "Citations between communities (rows cite columns; paper Table 2)",
                "rows": names, "cols": names, "matrix": C.values.tolist()}
+    links = [(i, j, int(C.values[i, j])) for i in range(len(C)) for j in range(len(C))
+             if i != j and C.values[i, j] > 0]
+    if links:
+        a.charts.append({"type": "sankey", "title": "Citation flows between communities "
+                                                     "(left cites right; within-community citations left out)",
+                         "names": names, "color_ids": [int(c) for c in C.index], "links": links})
     return a
 
 
@@ -608,8 +690,9 @@ def q_growth(res) -> Answer:
                       "field's (1 = same pace, >1.2 growing, <0.8 declining).")
     a.tables["Community lifecycle"] = t
     a.tables["Papers per year"] = pivot.rename(columns=lambda c: _name(res, c)).reset_index()
-    a.chart = {"type": "line", "title": "Papers per year by community", "x": years,
-               "series": {_name(res, c): pivot[c].tolist() for c in comms}, "x_label": "year"}
+    a.chart = {"type": "stack", "title": "Papers per year by community (stacked)", "x": years,
+               "series": {_name(res, c): pivot[c].tolist() for c in comms},
+               "color_ids": [int(c) for c in comms], "x_label": "year"}
     return a
 
 
@@ -732,6 +815,13 @@ def q_brokers(res) -> Answer:
     a.findings.append(f"{len(t)} authors publish in more than one community: they carry knowledge "
                       "between topics.")
     a.tables["Broker authors (RQ3)"] = t.head(25)
+    comms = _main_comms(res, 10)
+    top_auth = A.groupby("author")["paper"].nunique().sort_values(ascending=False).head(20).index
+    M = (A[A["author"].isin(top_auth) & A["community"].isin(comms)]
+         .groupby(["author", "community"])["paper"].nunique().unstack(fill_value=0)
+         .reindex(index=top_auth, columns=comms, fill_value=0))
+    a.chart = {"type": "heatmap", "title": "Papers by the 20 most productive authors in each community",
+               "rows": list(M.index), "cols": [_name(res, c) for c in comms], "matrix": M.values.tolist()}
     return a
 
 
@@ -793,6 +883,12 @@ def q_geo(res) -> Answer:
         a.chart = {"type": "line", "title": "Papers per year, top countries",
                    "x": [int(x) for x in by_year.index], "series": {k: by_year[k].tolist() for k in by_year.columns},
                    "x_label": "year"}
+    comms = _main_comms(res, 10)
+    cc = (cpp[cpp["community"].isin(comms) & cpp["country"].isin(top_c.index[:12])]
+          .groupby(["country", "community"])["paper"].nunique().unstack(fill_value=0)
+          .reindex(index=top_c.index[:12], columns=comms, fill_value=0))
+    a.charts.append({"type": "heatmap", "title": "Papers by country and community",
+                     "rows": list(cc.index), "cols": [_name(res, c) for c in comms], "matrix": cc.values.tolist()})
     a.findings.append("Institution names are taken from the affiliation part that names a university, "
                       "institute, school etc.; spelling variants may need merging.")
     return a
@@ -1016,8 +1112,6 @@ _BY_ID = {q.qid: q for q in QUESTIONS}
 PLANNED = [
     ("Topic evolution with merge/split events", "Evolution"),
     ("Sub-communities and community dendrogram", "Map the field"),
-    ("Directed (time-ordered) community detection", "Map the field"),
-    ("Citation enrichment through the Scopus API", "Knowledge flows"),
     ("Full-text (PDF) content analysis", "Map the field"),
 ]
 

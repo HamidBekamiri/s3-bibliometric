@@ -26,17 +26,56 @@ research*, Journal of Business Research 219, 116582.
    paper) and **MI** (the community's within + inward citations as a share of the field's
    citation links)
 
-Leiden uses a fixed seed (default 42), so results are reproducible.
+**Reproducible.** One seed (default 42) fixes every random step: Python, NumPy, PyTorch,
+Leiden/Louvain, sampling and layouts. Two runs on the same file give identical results.
+
+**Clean input.** Before the analysis S3 drops records with neither title nor abstract and
+removes duplicates: the same EID, the same title + abstract, the same DOI with the same
+title (book chapters can share a DOI), and near-identical texts (S3 ≥ 0.98, e.g. reprints).
+The most-cited copy is kept; `res.removed` lists every dropped record and why.
+
+**Choose the embedding model** (default: mpnet, the model of the published paper):
+
+| key | model | use it for |
+|---|---|---|
+| `mpnet` | sentence-transformers/all-mpnet-base-v2 | default; the published S3 method |
+| `specter` | sentence-transformers/allenai-specter | scientific papers (trained on citations) |
+| `minilm` | sentence-transformers/all-MiniLM-L6-v2 | quick looks, about 5× faster |
+| `multilingual` | paraphrase-multilingual-mpnet-base-v2 | corpora mixing languages |
+| `qwen3` | Qwen/Qwen3-Embedding-0.6B | long abstracts (no truncation); slower |
+| `clip` | sentence-transformers/clip-ViT-B-32 | multimodal (text + images); reads only 77 tokens of text |
+
+Any other sentence-transformers model name also works. The threshold range 0.75–0.85 was
+calibrated for mpnet; other models get a wider scan (0.40–0.95) unless you set one.
+
+**Exact citations (optional).** By default citations are found by matching titles in the
+References text. With a Scopus API key (`SCOPUS_API_KEY`, from dev.elsevier.com) S3 fetches
+each paper's reference list from the Scopus API instead, so only real links count. This
+needs Scopus entitlement: your institution's network or an institutional token
+(`SCOPUS_INST_TOKEN`).
 
 ```python
-s3bib.S3Config(threshold=0.78)            # reproduce a published threshold
-s3bib.S3Config(community_method="louvain") # reproduce the S3 web app instead
-s3bib.S3Config(mi_denominator="all")       # MI over all in-corpus links
+res = s3bib.run_s3("scopus.csv", s3bib.S3Config(model_name="specter"))
+s3bib.enrich_citations(res)                 # exact citations via the Scopus API
+s3bib.S3Config(threshold=0.78)              # reproduce a published threshold
+s3bib.S3Config(community_method="louvain")  # reproduce the S3 web app instead
+s3bib.S3Config(dedupe=False)                # keep duplicates
+s3bib.S3Config(mi_denominator="all")        # MI over all in-corpus links
 ```
 
-**Reproducing the paper.** On the paper's ‘Innovation and Diversity’ corpus, a fixed
-threshold of 0.78 retains exactly the paper's 1,826 papers, and the ten largest Leiden
-communities and their QI, local and global citations closely match Table 1.
+On the command line, `s3bib report scopus.csv` asks which model to use and whether to use the
+Scopus API; in Claude, the assistant asks the same two questions before the first run.
+
+**Reproducing the paper.** On the paper's ‘Innovation and Diversity’ corpus, with
+`S3Config(threshold=0.78, dedupe=False)` the run retains exactly the paper's 1,826 papers,
+and the ten largest Leiden communities and their QI, local and global citations closely
+match Table 1.
+
+**Visuals.** The report includes the paper's figures (S3 network map as in Panel 1, SII
+curve as in Fig. 3, elbow plot as in Fig. 4, citation-flow heatmap as in Table 2), an
+interactive paper-level network map (zoom, pan, hover for the paper, click a community to
+highlight it), a citation-flow diagram, a stacked growth chart, and author × community and
+country × community maps. Community colours are the same in every chart.
 
 ## The guided pipeline: 23 research questions
 
@@ -46,8 +85,8 @@ ones you need. Questions whose data is missing from your export are skipped and 
 | Stage | Questions |
 |---|---|
 | **1. Trust the map** | Q1 Best similarity threshold (SII) · Q2 Strength of the community structure (silhouette, modularity) · Q3 Papers that don't belong · Q4 Agreement with bibliographic coupling and co-citation |
-| **2. Map the field** | Q5 Main communities · Q6 What each is about · Q7 Core papers (centrality) · Q8 Foundational papers, local vs global (Table 3) · Q9 How close communities are |
-| **3. Knowledge flows** | Q10 Citation flows, QI and MI (Table 2) · Q11 Knowledge gaps (similar but not citing) · Q12 Papers that bridge communities |
+| **2. Map the field** | Q5 Main communities · Q6 What each is about · Q7 Core papers (centrality) · Q8 Foundational papers, local vs global (Appendix Table C1) · Q9 How close communities are |
+| **3. Knowledge flows** | Q10 Citation flows, QI and MI (Tables 1–2) · Q11 Knowledge gaps (similar but not citing) · Q12 Papers that bridge communities |
 | **4. Evolution** | Q13 Emerging, growing and declining communities · Q14 Rising and fading concepts |
 | **5. Actors** | Q15 Leading authors (RFI) · Q16 Broker authors · Q17 Collaboration gaps · Q18 Countries and institutions · Q19 Journals · Q20 Funders |
 | **6. Interdisciplinarity** | Q21 How interdisciplinary each community is (Rao-Stirling with S3 distances) · Q22 Are interdisciplinary papers cited more? · Q23 Is the field becoming more interdisciplinary? |

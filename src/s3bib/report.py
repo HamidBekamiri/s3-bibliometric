@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import html
+import json
 import math
 from datetime import date
 from pathlib import Path
@@ -11,19 +12,33 @@ import pandas as pd
 
 from .questions import QUESTIONS, PLANNED, STAGES, answer, available
 
-PALETTE = ["#0f6b74", "#c2672c", "#5b5fa8", "#3f8f4e", "#b8456b", "#8a7a2c", "#4f7fb3", "#7a5c99"]
+# One colour per community (community 0 = largest); grey for communities outside the top 10.
+PALETTE = ["#0f6b74", "#c2672c", "#5b5fa8", "#3f8f4e", "#b8456b", "#8a7a2c", "#4f7fb3", "#7a5c99",
+           "#2f9c95", "#d0893a"]
+GREY = "#9aa7ad"
 
 
 def _e(x: Any) -> str:
     return html.escape("" if x is None else str(x))
 
 
+def _col(c) -> str:
+    try:
+        c = int(c)
+    except (TypeError, ValueError):
+        return GREY
+    return PALETTE[c] if 0 <= c < len(PALETTE) else GREY
+
+
 # ---------------------------------------------------------------- charts --
 def _bar(spec: Dict[str, Any]) -> str:
-    labels, values = spec["labels"][:15], [float(v) for v in spec["values"][:15]]
+    n = int(spec.get("max", 15))
+    labels, values = spec["labels"][:n], [float(v) for v in spec["values"][:n]]
     if not values:
         return ""
-    w, row, left = 640, 24, 210
+    hl = spec.get("highlight")
+    cids = spec.get("color_ids")
+    w, row, left = 640, 22 if len(values) > 15 else 24, 210
     h = row * len(values) + 20
     lo, hi = min(0.0, min(values)), max(0.0, max(values))
     span = (hi - lo) or 1.0
@@ -32,25 +47,25 @@ def _bar(spec: Dict[str, Any]) -> str:
     for k, (lab, v) in enumerate(zip(labels, values)):
         y = 10 + k * row
         x1 = left + (v - lo) / span * (w - left - 60)
-        out.append(f'<text x="{left - 8}" y="{y + 15}" text-anchor="end" class="lab">{_e(str(lab)[:32])}</text>')
+        if hl is not None:
+            fill = _col(cids[k]) if (cids and k < hl) else (PALETTE[0] if k < hl else GREY)
+        else:
+            fill = PALETTE[0] if v >= 0 else PALETTE[1]
+        out.append(f'<text x="{left - 8}" y="{y + 14}" text-anchor="end" class="lab">{_e(str(lab)[:32])}</text>')
         out.append(f'<rect x="{min(x0, x1):.1f}" y="{y + 3}" width="{max(1, abs(x1 - x0)):.1f}" height="{row - 8}" '
-                   f'rx="2" fill="{PALETTE[0] if v >= 0 else PALETTE[1]}"/>')
-        out.append(f'<text x="{max(x0, x1) + 6:.1f}" y="{y + 15}" class="val">{v:g}</text>')
+                   f'rx="2" fill="{fill}"/>')
+        out.append(f'<text x="{max(x0, x1) + 6:.1f}" y="{y + 14}" class="val">{v:g}</text>')
+        if hl is not None and k == hl - 1 and k < len(values) - 1:
+            out.append(f'<line x1="{left - 200}" x2="{w}" y1="{y + row + 0.5}" y2="{y + row + 0.5}" class="cut"/>'
+                       f'<text x="{w - 4}" y="{y + row - 3}" text-anchor="end" class="val">elbow: top {hl}</text>')
     out.append(f'<line x1="{x0:.1f}" x2="{x0:.1f}" y1="6" y2="{h - 6}" class="axis"/></svg>')
     return "".join(out)
 
 
-def _line(spec: Dict[str, Any]) -> str:
-    xs = [float(x) for x in spec["x"]]
-    series = list(spec["series"].items())[:8]
-    if len(xs) < 2 or not series:
-        return ""
-    w, h, l, r, t, b = 640, 260, 48, 16, 14, 34
-    ys = [float(v) for _, s in series for v in s]
-    lo, hi = min(0.0, min(ys)), max(ys) or 1.0
+def _axes(xs, lo, hi, w, h, l, r, t, b):
     X = lambda x: l + (x - xs[0]) / ((xs[-1] - xs[0]) or 1) * (w - l - r)
     Y = lambda y: t + (1 - (y - lo) / ((hi - lo) or 1)) * (h - t - b)
-    out = [f'<svg viewBox="0 0 {w} {h}" class="chart" role="img" aria-label="{_e(spec.get("title"))}">']
+    out = []
     for k in range(5):
         yv = lo + (hi - lo) * k / 4
         out.append(f'<line x1="{l}" x2="{w - r}" y1="{Y(yv):.1f}" y2="{Y(yv):.1f}" class="grid"/>'
@@ -58,18 +73,66 @@ def _line(spec: Dict[str, Any]) -> str:
     step = max(1, len(xs) // 8)
     for x in xs[::step]:
         out.append(f'<text x="{X(x):.1f}" y="{h - 12}" text-anchor="middle" class="val">{x:g}</text>')
+    return X, Y, out
+
+
+def _legend(items) -> str:
+    return '<div class="legend">' + "".join(
+        f'<span><i style="background:{c}"></i>{_e(n)}</span>' for n, c in items) + "</div>"
+
+
+def _line(spec: Dict[str, Any]) -> str:
+    xs = [float(x) for x in spec["x"]]
+    series = list(spec["series"].items())[:10]
+    if len(xs) < 2 or not series:
+        return ""
+    w, h, l, r, t, b = 640, 260, 48, 16, 18, 34
+    ys = [float(v) for _, s in series for v in s]
+    lo, hi = min(0.0, min(ys)), max(ys) or 1.0
+    X, Y, out = _axes(xs, lo, hi, w, h, l, r, t, b)
+    out.insert(0, f'<svg viewBox="0 0 {w} {h}" class="chart" role="img" aria-label="{_e(spec.get("title"))}">')
+    cids = spec.get("color_ids")
+    colors = [_col(cids[k]) if cids else PALETTE[k % len(PALETTE)] for k in range(len(series))]
     for k, (name, s) in enumerate(series):
         pts = " ".join(f"{X(x):.1f},{Y(float(v)):.1f}" for x, v in zip(xs, s))
-        out.append(f'<polyline points="{pts}" fill="none" stroke="{PALETTE[k % 8]}" stroke-width="2"/>')
+        out.append(f'<polyline points="{pts}" fill="none" stroke="{colors[k]}" stroke-width="2"/>')
+        if len(series) == 1:
+            out += [f'<circle cx="{X(x):.1f}" cy="{Y(float(v)):.1f}" r="2.6" fill="{colors[k]}"/>' for x, v in zip(xs, s)]
+    if spec.get("mark") is not None:
+        mx = X(float(spec["mark"]))
+        out.append(f'<line x1="{mx:.1f}" x2="{mx:.1f}" y1="{t}" y2="{h - b}" class="cut"/>'
+                   f'<text x="{mx + 5:.1f}" y="{t + 10}" class="lab">{_e(spec.get("mark_label", ""))}</text>')
     out.append("</svg>")
-    legend = "".join(f'<span><i style="background:{PALETTE[k % 8]}"></i>{_e(n)}</span>'
-                     for k, (n, _) in enumerate(series)) if len(series) > 1 else ""
-    return "".join(out) + (f'<div class="legend">{legend}</div>' if legend else "")
+    return "".join(out) + (_legend([(n, colors[k]) for k, (n, _) in enumerate(series)]) if len(series) > 1 else "")
+
+
+def _stack(spec: Dict[str, Any]) -> str:
+    xs = [float(x) for x in spec["x"]]
+    series = list(spec["series"].items())[:10]
+    if len(xs) < 2 or not series:
+        return ""
+    w, h, l, r, t, b = 640, 280, 48, 16, 14, 34
+    tot = [sum(float(s[i]) for _, s in series) for i in range(len(xs))]
+    X, Y, out = _axes(xs, 0.0, max(tot) or 1.0, w, h, l, r, t, b)
+    out.insert(0, f'<svg viewBox="0 0 {w} {h}" class="chart" role="img" aria-label="{_e(spec.get("title"))}">')
+    cids = spec.get("color_ids")
+    base = [0.0] * len(xs)
+    items = []
+    for k, (name, s) in enumerate(series):
+        top = [base[i] + float(s[i]) for i in range(len(xs))]
+        poly = [f"{X(x):.1f},{Y(v):.1f}" for x, v in zip(xs, top)] + \
+               [f"{X(x):.1f},{Y(v):.1f}" for x, v in zip(reversed(xs), reversed(base))]
+        c = _col(cids[k]) if cids else PALETTE[k % len(PALETTE)]
+        out.append(f'<polygon points="{" ".join(poly)}" fill="{c}" fill-opacity=".8" stroke="{c}" stroke-width=".5"/>')
+        items.append((name, c))
+        base = top
+    out.append("</svg>")
+    return "".join(out) + _legend(items)
 
 
 def _heat(spec: Dict[str, Any]) -> str:
-    rows, cols, M = spec["rows"][:12], spec["cols"][:12], spec["matrix"]
-    vals = [float(v) for r in M[:12] for v in r[:12]]
+    rows, cols, M = spec["rows"][:20], spec["cols"][:12], spec["matrix"]
+    vals = [float(v) for r in M[:20] for v in r[:12]]
     if not vals:
         return ""
     lo, hi = min(vals), max(vals)
@@ -78,17 +141,132 @@ def _heat(spec: Dict[str, Any]) -> str:
         tds = []
         for j in range(len(cols)):
             v = float(M[i][j])
-            a = 0.08 + 0.85 * ((v - lo) / ((hi - lo) or 1))
+            a = 0.06 + 0.85 * ((v - lo) / ((hi - lo) or 1))
             tds.append(f'<td style="background:rgba(15,107,116,{a:.2f});color:{"#fff" if a > 0.55 else "inherit"}">{v:g}</td>')
-        cells.append(f"<tr><th>{_e(str(rn)[:28])}</th>{''.join(tds)}</tr>")
-    head = "".join(f"<th>{_e(str(c)[:14])}</th>" for c in cols)
+        cells.append(f"<tr><th>{_e(str(rn)[:30])}</th>{''.join(tds)}</tr>")
+    head = "".join(f'<th title="{_e(c)}">{_e(str(c)[:16])}</th>' for c in cols)
     return f'<div class="tw"><table class="heat"><tr><th></th>{head}</tr>{"".join(cells)}</table></div>'
+
+
+def _sankey(spec: Dict[str, Any]) -> str:
+    names, cids, links = spec["names"], spec["color_ids"], spec["links"]
+    k = len(names)
+    out_tot = [sum(v for i, j, v in links if i == a) for a in range(k)]
+    in_tot = [sum(v for i, j, v in links if j == a) for a in range(k)]
+    total = max(sum(out_tot), sum(in_tot)) or 1
+    w, gap, top, H = 640, 6, 24, 400
+    sc = (H - top * 2 - gap * (k - 1)) / total
+    xl, xr, nw = 190, 450, 12
+    def stack(tots):
+        y, pos = top, []
+        for v in tots:
+            pos.append(y)
+            y += max(v * sc, 1) + gap
+        return pos
+    yl, yr = stack(out_tot), stack(in_tot)
+    offl, offr = [0.0] * k, [0.0] * k
+    paths = []
+    for i, j, v in sorted(links, key=lambda x: (x[0], x[1])):
+        th = v * sc
+        y0 = yl[i] + offl[i] + th / 2
+        y1 = yr[j] + offr[j] + th / 2
+        offl[i] += th
+        offr[j] += th
+        xm = (xl + nw + xr) / 2
+        paths.append(f'<path d="M{xl + nw},{y0:.1f} C{xm},{y0:.1f} {xm},{y1:.1f} {xr},{y1:.1f}" fill="none" '
+                     f'stroke="{_col(cids[i])}" stroke-opacity=".42" stroke-width="{max(th, .6):.1f}">'
+                     f'<title>{_e(names[i])} → {_e(names[j])}: {v}</title></path>')
+    nodes = []
+    for a in range(k):
+        c = _col(cids[a])
+        if out_tot[a]:
+            nodes.append(f'<rect x="{xl}" y="{yl[a]:.1f}" width="{nw}" height="{max(out_tot[a] * sc, 1):.1f}" fill="{c}"/>'
+                         f'<text x="{xl - 6}" y="{yl[a] + max(out_tot[a] * sc, 1) / 2 + 4:.1f}" text-anchor="end" class="lab">'
+                         f'{_e(str(names[a])[:28])} ({out_tot[a]})</text>')
+        if in_tot[a]:
+            nodes.append(f'<rect x="{xr}" y="{yr[a]:.1f}" width="{nw}" height="{max(in_tot[a] * sc, 1):.1f}" fill="{c}"/>'
+                         f'<text x="{xr + nw + 6}" y="{yr[a] + max(in_tot[a] * sc, 1) / 2 + 4:.1f}" class="lab">'
+                         f'{_e(str(names[a])[:28])} ({in_tot[a]})</text>')
+    hh = max(max(yl[-1] + out_tot[-1] * sc, yr[-1] + in_tot[-1] * sc) + top, 60)
+    return (f'<svg viewBox="0 0 {w} {hh:.0f}" class="chart" role="img" aria-label="{_e(spec.get("title"))}">'
+            f'<text x="{xl + nw / 2}" y="12" text-anchor="middle" class="val">citing</text>'
+            f'<text x="{xr + nw / 2}" y="12" text-anchor="middle" class="val">cited</text>'
+            + "".join(paths) + "".join(nodes) + "</svg>")
+
+
+_NET_N = [0]
+
+
+def _network(spec: Dict[str, Any]) -> str:
+    _NET_N[0] += 1
+    nid = f"s3net{_NET_N[0]}"
+    data = json.dumps({"nodes": spec["nodes"], "edges": spec["edges"], "palette": PALETTE, "grey": GREY},
+                      separators=(",", ":")).replace("</", "<\\/")
+    legend = "".join(f'<button type="button" data-c="{g["id"]}"><i style="background:{_col(g["id"])}"></i>'
+                     f'{_e(g["name"])} <span class="mut">({g["n"]})</span></button>' for g in spec["legend"])
+    return (f'<div class="net"><canvas id="{nid}" aria-label="{_e(spec.get("title"))}"></canvas>'
+            f'<div class="net-tip" id="{nid}-tip" hidden></div>'
+            f'<div class="net-help">Scroll or use the buttons to zoom, drag to move, hover a dot for the paper. '
+            f'<button type="button" data-z="1.4">+</button><button type="button" data-z="0.7">−</button>'
+            f'<button type="button" data-z="0">Reset</button></div></div>'
+            f'<div class="legend net-legend" id="{nid}-legend">{legend}</div>'
+            f'<script type="application/json" id="{nid}-data">{data}</script>'
+            f'<script>s3Net("{nid}")</script>')
+
+
+NET_JS = r"""
+<script>
+function s3Net(id){
+  const cv=document.getElementById(id), tip=document.getElementById(id+'-tip');
+  const d=JSON.parse(document.getElementById(id+'-data').textContent), ctx=cv.getContext('2d');
+  const N=d.nodes, E=d.edges; let W=0,H=0,dpr=1,scale=1,ox=0,oy=0,hl=null,hover=-1,drag=null,P=[];
+  const xs=N.map(n=>n[0]), ys=N.map(n=>n[1]);
+  const cx=(Math.min(...xs)+Math.max(...xs))/2, cy=(Math.min(...ys)+Math.max(...ys))/2;
+  const sx=(Math.max(...xs)-Math.min(...xs))||1, sy=(Math.max(...ys)-Math.min(...ys))||1;
+  const col=c=>(c>=0&&c<d.palette.length)?d.palette[c]:d.grey;
+  function size(){dpr=window.devicePixelRatio||1;W=cv.clientWidth;H=cv.clientHeight;cv.width=W*dpr;cv.height=H*dpr;draw();}
+  function place(){const s=Math.min(W/sx,H/sy)*0.92*scale;P=N.map(n=>[(n[0]-cx)*s+W/2+ox,(n[1]-cy)*s+H/2+oy]);}
+  function draw(){
+    if(!W)return; place(); ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,W,H); ctx.lineWidth=0.6;
+    for(const [a,b] of E){const ca=N[a][2],cb=N[b][2],on=hl===null||ca===hl||cb===hl;
+      ctx.globalAlpha=on?(ca===cb?0.28:0.16):0.04; ctx.strokeStyle=ca===cb?col(ca):d.grey;
+      ctx.beginPath();ctx.moveTo(P[a][0],P[a][1]);ctx.lineTo(P[b][0],P[b][1]);ctx.stroke();}
+    for(let i=0;i<N.length;i++){const n=N[i],on=hl===null||n[2]===hl;
+      ctx.globalAlpha=on?0.92:0.1;ctx.fillStyle=col(n[2]);ctx.beginPath();
+      ctx.arc(P[i][0],P[i][1],n[3]*(i===hover?1.8:1)*Math.sqrt(scale),0,6.2832);ctx.fill();}
+    ctx.globalAlpha=1;}
+  function zoom(f,mx,my){if(f===0){scale=1;ox=0;oy=0;draw();return;}
+    mx=mx??W/2;my=my??H/2;const ns=Math.min(40,Math.max(0.5,scale*f));
+    ox=mx-W/2-(mx-W/2-ox)*ns/scale;oy=my-H/2-(my-H/2-oy)*ns/scale;scale=ns;draw();}
+  function near(mx,my){let best=-1,bd=100;for(let i=0;i<P.length;i++){const dx=P[i][0]-mx,dy=P[i][1]-my,dd=dx*dx+dy*dy;
+    if(dd<bd&&(hl===null||N[i][2]===hl)){bd=dd;best=i;}}return best;}
+  function show(i,mx,my){hover=i;draw();if(i<0){tip.hidden=true;return;}const n=N[i];
+    tip.textContent='';const b=document.createElement('b');b.textContent=n[4];tip.appendChild(b);
+    tip.appendChild(document.createTextNode(' '+(n[5]??'')+' · '+n[6]+' citations · '+n[7]));
+    tip.hidden=false;const r=tip.getBoundingClientRect();
+    tip.style.left=Math.min(mx+12,W-r.width-4)+'px';tip.style.top=Math.min(my+12,H-r.height-4)+'px';}
+  cv.addEventListener('wheel',e=>{e.preventDefault();zoom(e.deltaY<0?1.15:1/1.15,e.offsetX,e.offsetY);},{passive:false});
+  cv.addEventListener('pointerdown',e=>{drag=[e.offsetX,e.offsetY,ox,oy];cv.setPointerCapture(e.pointerId);});
+  cv.addEventListener('pointermove',e=>{if(drag&&e.buttons){ox=drag[2]+e.offsetX-drag[0];oy=drag[3]+e.offsetY-drag[1];draw();return;}
+    show(near(e.offsetX,e.offsetY),e.offsetX,e.offsetY);});
+  cv.addEventListener('pointerup',e=>{if(drag&&Math.abs(e.offsetX-drag[0])+Math.abs(e.offsetY-drag[1])<4)show(near(e.offsetX,e.offsetY),e.offsetX,e.offsetY);drag=null;});
+  cv.addEventListener('pointerleave',()=>{if(!drag)show(-1);});
+  cv.parentElement.querySelectorAll('button[data-z]').forEach(b=>b.addEventListener('click',()=>zoom(+b.dataset.z)));
+  document.querySelectorAll('#'+id+'-legend button').forEach(b=>b.addEventListener('click',()=>{
+    const c=+b.dataset.c;hl=hl===c?null:c;document.querySelectorAll('#'+id+'-legend button').forEach(x=>
+    x.classList.toggle('off',hl!==null&&+x.dataset.c!==hl));draw();}));
+  new ResizeObserver(size).observe(cv); size();
+}
+</script>
+"""
 
 
 def _chart(spec: Optional[Dict[str, Any]]) -> str:
     if not spec:
         return ""
-    body = {"bar": _bar, "line": _line, "heatmap": _heat}[spec["type"]](spec)
+    fn = {"bar": _bar, "line": _line, "heatmap": _heat, "stack": _stack, "sankey": _sankey,
+          "network": _network}.get(spec["type"])
+    body = fn(spec) if fn else ""
     return f'<figure><figcaption>{_e(spec.get("title"))}</figcaption>{body}</figure>' if body else ""
 
 
@@ -137,6 +315,15 @@ th,td{border-bottom:1px solid var(--line);padding:5px 8px;text-align:left;vertic
 td.n{text-align:right;font-variant-numeric:tabular-nums}table.heat td{text-align:center;min-width:46px}
 .more{font-size:.8rem;color:var(--mut);margin:4px 0}.na{opacity:.7}
 footer{margin-top:40px;font-size:.85rem;color:var(--mut)}
+.chart .cut{stroke:var(--fg);stroke-dasharray:4 3;opacity:.6}
+.net{position:relative;height:min(70vh,620px);border:1px solid var(--line);border-radius:8px;background:var(--bg);overflow:hidden}
+.net canvas{width:100%;height:100%;display:block;cursor:grab;touch-action:none}
+.net-tip{position:absolute;max-width:320px;padding:6px 9px;font-size:.8rem;line-height:1.35;background:var(--card);border:1px solid var(--line);border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.15);pointer-events:none}
+.net-help{position:absolute;left:8px;bottom:8px;font-size:.75rem;color:var(--mut);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.net-help button,.net-legend button{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:5px;padding:2px 8px;cursor:pointer}
+.net-legend{margin-top:8px}.net-legend button{display:inline-flex;align-items:center;gap:5px;font-size:.8rem}
+.net-legend button.off{opacity:.35}
+.net-help button:focus-visible,.net-legend button:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
 """
 
 
@@ -171,12 +358,12 @@ def build_report(res, path: Union[str, Path], title: Optional[str] = None,
         findings = "".join(f"<li>{_e(f)}</li>" for f in a.findings)
         tables = "".join(_table(k, v) for k, v in a.tables.items())
         body.append(f'<section class="q" id="{q.qid}">{head}<ul class="f">{findings}</ul>'
-                    f'{_chart(a.chart)}{tables}</section>')
+                    f'{_chart(a.chart)}{"".join(_chart(c) for c in a.charts)}{tables}</section>')
     thr = f"{res.best['threshold']:.2f}" if res.best else "n/a"
     planned = "".join(f"<li>{_e(p)} <span class='mut'>({_e(s)})</span></li>" for p, s in PLANNED)
     doc = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>{_e(title)}</title><style>{CSS}</style></head>
-<body><div class="wrap">
+<body>{NET_JS}<div class="wrap">
 <h1>{_e(title)}</h1>
 <p class="mut">{n} papers · {span} · best S3 threshold {thr} ·
 {int(res.papers['community'].notna().sum())} clustered papers in {len(res.communities())} communities · generated {date.today()} with s3-bibliometric</p>

@@ -41,7 +41,13 @@ mcp = _Server(
     "s3-bibliometric",
     instructions=(
         "Tools for the S3 (Semantic Similarity Score) bibliometric method. "
-        "Typical flow: run_s3_analysis on a Scopus CSV -> get_community for each main "
+        "Before the first run_s3_analysis, ask the user two questions unless they already "
+        "answered: (1) which embedding model to use (call list_embedding_models; the default "
+        "is mpnet, the model of the published S3 paper), and (2) whether they want exact "
+        "citations from the Scopus API (needs SCOPUS_API_KEY set in this MCP server's "
+        "environment; never ask the user to paste a key into the chat). "
+        "Typical flow: run_s3_analysis on a Scopus CSV -> enrich_citations if the user wants "
+        "exact citations -> get_community for each main "
         "community and save_community_labels with short labels -> list_questions shows "
         "the ranked research questions (Q1-Q23, in 6 stages) this dataset can answer -> "
         "answer_question for the ones the user cares about, in rank order -> "
@@ -93,6 +99,8 @@ def run_s3_analysis(
     rerun: bool = False,
     threshold: Optional[float] = None,
     community_method: str = "leiden",
+    embedding_model: str = "mpnet",
+    remove_duplicates: bool = True,
 ) -> Dict[str, Any]:
     """Run the S3 pipeline on a Scopus CSV/Excel export (needs Title and Abstract;
     Year, Cited by, Authors, Author Keywords, References and EID are used if present).
@@ -101,7 +109,10 @@ def run_s3_analysis(
     the time-ordered S3 graph, scans thresholds 0.75-0.85 and keeps the Leiden (directed
     modularity) partition with the highest SII (silhouette x retained papers).
     Set threshold (e.g. 0.78) to reproduce a published run, or community_method="louvain"
-    to reproduce the S3 web app. Can take several minutes
+    to reproduce the S3 web app. embedding_model is a key from list_embedding_models or
+    any sentence-transformers model name (ask the user first; default mpnet). Records
+    without title and abstract are dropped and duplicates (same DOI/EID/text, or S3 >= 0.98)
+    are removed unless remove_duplicates=False. Can take several minutes
     for thousands of papers the first time; embeddings are cached afterwards.
 
     Returns a run_id plus a summary: best threshold, communities, outlier count.
@@ -110,7 +121,8 @@ def run_s3_analysis(
     if not p.exists():
         raise ValueError(f"File not found: {p}")
     stem = re.sub(r"[^A-Za-z0-9_-]+", "_", p.stem)[:40]
-    key = f"{p.resolve()}|{p.stat().st_size}|{start_year}|{end_year}|{seed}|{threshold}|{community_method}"
+    key = (f"{p.resolve()}|{p.stat().st_size}|{start_year}|{end_year}|{seed}|{threshold}|"
+           f"{community_method}|{embedding_model}|{remove_duplicates}")
     run_id = f"{stem}_{hashlib.sha1(key.encode()).hexdigest()[:8]}"
 
     if not rerun and (_run_dir(run_id) / "run.json").exists():
@@ -118,11 +130,41 @@ def run_s3_analysis(
     else:
         cfg = S3Config(start_year=start_year, end_year=end_year, seed=seed,
                        cache_dir=str(HOME / "_cache"), threshold=threshold,
-                       community_method=community_method)
+                       community_method=community_method, model_name=embedding_model,
+                       dedupe=remove_duplicates)
         res = run_s3(p, cfg)
         res.save(_run_dir(run_id))
         _RUNS[run_id] = res
-    return {"run_id": run_id, **res.summary()}
+    out = {"run_id": run_id, "embedding_model": res.config.model_name, **res.summary()}
+    if len(res.removed):
+        out["removed_records"] = res.removed["reason"].value_counts().to_dict()
+    return out
+
+
+@mcp.tool()
+def list_embedding_models() -> List[Dict[str, Any]]:
+    """Embedding models the user can choose for run_s3_analysis (key, model, kind, max tokens,
+    description). Default: mpnet, the model used in the published S3 paper."""
+    from .models import model_table
+    return model_table()
+
+
+@mcp.tool()
+def enrich_citations(run_id: str) -> Dict[str, Any]:
+    """Replace approximate citation links (matched from reference titles) with exact links
+    from the Scopus Abstract Retrieval API. Reads SCOPUS_API_KEY (and optional
+    SCOPUS_INST_TOKEN) from this server's environment; needs Scopus entitlement (institution
+    network or token). Takes about 0.2 s per paper; results are cached."""
+    from .scopus import ScopusAccessError, enrich_citations as _enrich
+    res = _get(run_id)
+    try:
+        stats = _enrich(res, cache_dir=str(HOME / "_scopus"))
+    except ScopusAccessError as e:
+        return {"ok": False, "error": str(e),
+                "how_to_fix": "Add SCOPUS_API_KEY (and SCOPUS_INST_TOKEN if needed) to the env "
+                              "section of this MCP server's configuration, then restart the app."}
+    res.save(_run_dir(run_id))
+    return {"ok": True, **stats}
 
 
 @mcp.tool()

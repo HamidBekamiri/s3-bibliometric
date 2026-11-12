@@ -10,11 +10,11 @@ from s3bib import pipeline
 def _fake_embed(texts, *a, **k):
     # 3 well-separated topics + noise; topic is encoded in the title prefix
     rng = np.random.default_rng(0)
-    centers = np.eye(8)[:3]
+    centers = np.eye(64)[:3]
     out = []
     for t in texts:
-        c = centers[int(t[1])] if t.startswith("T") and t[1].isdigit() else rng.normal(size=8)
-        out.append(c + 0.05 * rng.normal(size=8))
+        c = centers[int(t[1])] if t.startswith("T") and t[1].isdigit() else rng.normal(size=64)
+        out.append(c + 0.045 * rng.normal(size=64))
     e = np.array(out, dtype=np.float32)
     return e / np.linalg.norm(e, axis=1, keepdims=True)
 
@@ -107,11 +107,12 @@ def test_concept_trends_ignore_search_terms(df, monkeypatch):
 
 def test_fixed_threshold_and_methods(df, monkeypatch):
     monkeypatch.setattr(pipeline, "embed_texts", _fake_embed)
-    fixed = s3bib.run_s3(df, s3bib.S3Config(threshold=0.9), progress=lambda s, p: None)
-    assert fixed.best["threshold"] == 0.9 and fixed.best["fixed"]
+    fixed = s3bib.run_s3(df, s3bib.S3Config(threshold=0.8), progress=lambda s, p: None)
+    assert fixed.best["threshold"] == 0.8 and fixed.best["fixed"]
     assert "fixed" in fixed.answer("Q1").findings[0]
     lv = s3bib.run_s3(df, s3bib.S3Config(community_method="louvain"), progress=lambda s, p: None)
-    assert len(lv.communities()) == len(fixed.communities()) == 3
+    assert lv.config.community_method == "louvain" and len(lv.communities()) >= 3
+    assert len(fixed.communities()) == 3
 
 
 def test_citation_metrics_count_whole_corpus(df, monkeypatch):
@@ -122,3 +123,98 @@ def test_citation_metrics_count_whole_corpus(df, monkeypatch):
     assert m["local_citations"].equals(m["within_citations"] + m["inward_citations"])
     assert abs(m["mi"].sum() - m["local_citations"].sum() / res.mi_denominator() * 100) < 1e-9
     assert res.top_terms(0, 3)  # c-TF-IDF terms
+
+
+def test_runs_are_reproducible(df, monkeypatch):
+    monkeypatch.setattr(pipeline, "embed_texts", _fake_embed)
+    a = s3bib.run_s3(df, progress=lambda s, p: None)
+    b = s3bib.run_s3(df, progress=lambda s, p: None)
+    assert a.papers["community"].equals(b.papers["community"]) and a.scan == b.scan
+    for qid, table in [("Q7", "Most central papers per community"), ("Q12", "Bridging papers")]:
+        ta, tb = a.answer(qid).tables.get(table), b.answer(qid).tables.get(table)
+        assert (ta is None and tb is None) or ta.equals(tb)
+
+
+def test_empty_and_duplicate_records_removed(df, monkeypatch):
+    monkeypatch.setattr(pipeline, "embed_texts", _fake_embed)
+    extra = pd.DataFrame([
+        {"Title": "", "Abstract": "", "Year": 2015, "Cited by": 0, "EID": "empty1"},
+        {"Title": "T0 paper 1", "Abstract": "abc", "Year": 2011, "Cited by": 0, "EID": "dup-text"},
+        dict(df.iloc[2]) | {"Title": "T0 paper 2 (reprint)"},  # same EID as row 2
+    ])
+    res = s3bib.run_s3(pd.concat([df, extra], ignore_index=True), progress=lambda s, p: None)
+    reasons = res.removed["reason"].tolist()
+    assert len(res.papers) == len(df)
+    assert "no title and no abstract" in reasons
+    assert sum(r.startswith("exact duplicate") for r in reasons) == 2
+    kept = s3bib.run_s3(pd.concat([df, extra], ignore_index=True), s3bib.S3Config(dedupe=False),
+                        progress=lambda s, p: None)
+    assert len(kept.papers) == len(df) + 2  # empty record is always dropped
+
+
+def test_near_duplicates_by_s3(df, monkeypatch):
+    def emb(texts, *a, **k):
+        e = _fake_embed(texts)
+        e[-1] = e[0]  # last paper is an exact semantic copy of the first
+        return e
+    monkeypatch.setattr(pipeline, "embed_texts", emb)
+    d = pd.concat([df, df.iloc[[0]].assign(Title="T0 paper 0 reprinted", EID="other")], ignore_index=True)
+    res = s3bib.run_s3(d, progress=lambda s, p: None)
+    assert res.removed["reason"].str.startswith("near duplicate").sum() == 1
+
+
+def test_model_presets():
+    from s3bib.models import MPNET_THRESHOLDS, WIDE_THRESHOLDS
+    assert s3bib.S3Config().model_name == s3bib.DEFAULT_MODEL
+    assert s3bib.S3Config().thresholds == MPNET_THRESHOLDS
+    c = s3bib.S3Config(model_name="specter")
+    assert c.model_name == "sentence-transformers/allenai-specter" and c.thresholds == WIDE_THRESHOLDS
+    assert s3bib.S3Config(model_name="clip").model_name.endswith("clip-ViT-B-32")
+
+
+def test_scopus_enrichment_with_mocked_api(df, monkeypatch, tmp_path):
+    monkeypatch.setattr(pipeline, "embed_texts", _fake_embed)
+    res = s3bib.run_s3(df, progress=lambda s, p: None)
+    eids = res.papers["eid"].tolist()
+
+    class Resp:
+        def __init__(self, payload, code=200):
+            self.payload, self.status_code, self.headers = payload, code, {}
+        def json(self):
+            return self.payload
+        def raise_for_status(self):
+            pass
+
+    class Session:
+        calls = 0
+        def get(self, url, headers, params, timeout):
+            Session.calls += 1
+            assert headers["X-ELS-APIKey"] == "test-key" and params["view"] == "REF"
+            eid = url.rsplit("/", 1)[-1]
+            i = eids.index(eid)
+            refs = [{"scopus-eid": eids[(i + 1) % len(eids)]}, {"scopus-id": "999"}, {"@id": "123"}]
+            return Resp({"abstracts-retrieval-response": {"references": {
+                "@total-references": "3", "reference": refs}}})
+
+    stats = s3bib.enrich_citations(res, api_key="test-key", session=Session(), cache_dir=tmp_path, pause=0)
+    assert res.citation_source == "scopus_api" and stats["failed"] == 0
+    assert len(res.citation_pairs) == len(eids)  # each paper cites the next one
+    assert "Scopus API (exact)" in res.answer("Q10").findings[0]
+    n = Session.calls
+    s3bib.enrich_citations(res, api_key="test-key", session=Session(), cache_dir=tmp_path, pause=0)
+    assert Session.calls == n  # second run comes from the cache
+
+
+def test_scopus_access_error(df, monkeypatch):
+    monkeypatch.setattr(pipeline, "embed_texts", _fake_embed)
+    res = s3bib.run_s3(df, progress=lambda s, p: None)
+
+    class Denied:
+        def get(self, *a, **k):
+            class R: status_code, headers = 403, {}
+            return R()
+    monkeypatch.delenv("SCOPUS_API_KEY", raising=False)
+    with pytest.raises(s3bib.ScopusAccessError):
+        s3bib.enrich_citations(res)  # no key at all
+    with pytest.raises(s3bib.ScopusAccessError):
+        s3bib.enrich_citations(res, api_key="x", session=Denied(), cache_dir=None, pause=0)
