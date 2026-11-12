@@ -62,7 +62,7 @@ s3bib.S3Config(community_method="louvain")  # reproduce the S3 web app instead
 s3bib.S3Config(dedupe=False)                # keep duplicates
 s3bib.S3Config(mi_denominator="all")        # MI over all in-corpus links
 s3bib.S3Config(citation_match="strict")     # short titles need year + first author too
-s3bib.S3Config(map_weights="hybrid")        # hybrid map (below)
+s3bib.S3Config(map_weights="text+coupling") # one of four maps (below)
 ```
 
 **Strict citation matching.** Matching titles inside References text can link a short,
@@ -73,23 +73,30 @@ author. `citation_match="strict"` (CLI `--strict-citations`) keeps a short-title
 when the year (±1) and first author also appear in the reference. The default stays
 `"lenient"`, as in the S3 web app and the published paper.
 
-**Hybrid maps.** The published S3 map uses text similarity alone. A hybrid map adds the
-classic citation relations, each scaled 0–1: bibliographic coupling and co-citation (Salton
-cosine) and direct citation. `map_weights="hybrid"` gives each 25%; or choose your own:
+**Choose the map: four options.** The published S3 map uses text similarity alone. You can
+add one citation relation at 25%:
+
+| `map_weights` (CLI `--map`) | The map is built from |
+|---|---|
+| `"text"` (default) | text similarity (S3), the published method |
+| `"text+coupling"` | 75% text + 25% bibliographic coupling (shared references) |
+| `"text+cocitation"` | 75% text + 25% co-citation (cited together) |
+| `"text+direct"` | 75% text + 25% direct citation |
 
 ```python
-s3bib.S3Config(map_weights="hybrid")                          # s3, coupling, direct, cocitation: 25% each
-s3bib.S3Config(map_weights={"s3": 0.5, "coupling": 0.5})      # any mix, normalised to sum 1
+res = s3bib.run_s3("scopus.csv", s3bib.S3Config(map_weights="text+cocitation"))
 ```
 
 ```bash
-s3bib report scopus.csv --map hybrid
-s3bib report scopus.csv --map "s3=0.5,cocitation=0.5"
+s3bib report scopus.csv --map text+cocitation
 ```
 
-Hybrid values sit on a different scale than S3, so the threshold scan matches link density:
-each hybrid threshold links as many pairs as one S3 threshold (0.75–0.85) on the same corpus,
-and SII picks the best, as for S3.
+Every result follows the choice: the threshold scan, communities, network map, knowledge
+tree, citation flows, bridges, interdisciplinarity and the report header (which names the
+map). Coupling and co-citation are Salton cosines (0–1). Because the citation part is 0 for
+most pairs, the threshold scan matches link density: each threshold links as many pairs as
+one S3 threshold (0.75–0.85) on the same corpus, and SII picks the best, as for S3. Custom
+mixes also work, e.g. `map_weights={"s3": 0.5, "coupling": 0.5}`.
 
 On the command line, `s3bib report scopus.csv` asks which model to use and whether to use the
 Scopus API; in Claude, the assistant asks the same two questions before the first run.
@@ -192,8 +199,10 @@ paper) with 95% intervals, so the report says when a model does not beat chance.
 (GraphSAGE, R-GCN, a temporal GCN + GRU, TransE and RotatE) are small and written in plain
 PyTorch, which sentence-transformers already installs; nothing else is needed.
 
-**Charts or tables.** Result tables open as bar charts; switch any of them to the table (and
-pick the column to plot), or switch all of them at once at the top of the report.
+**Charts or tables.** Result sections are closed until you click them open. Tables open as bar
+charts; switch any of them to the table (and pick the column to plot), or switch all of them
+at once at the top of the report. Q6 has a word cloud per community (or the whole field):
+10 words by default, up to 50.
 
 In Claude, use the **`s3_guided`** prompt, or ask: *"Walk me through the S3 questions for
 my Scopus file."*

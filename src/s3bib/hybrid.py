@@ -8,8 +8,12 @@ classic bibliometric relations, each scaled to 0-1, as a weighted sum:
   direct      direct citation: 1 if one paper cites the other inside the corpus
   cocitation  co-citation: cited together by papers of the corpus (Salton cosine)
 
-S3Config(map_weights="hybrid") uses 25% for each; pass a dict to choose your own weights,
-e.g. {"s3": 0.5, "coupling": 0.5}. Weights are normalised to sum to 1.
+Choose one of four maps with S3Config(map_weights=...):
+  "text"             text only (S3, the published method; the default)
+  "text+coupling"    75% text + 25% bibliographic coupling
+  "text+cocitation"  75% text + 25% co-citation
+  "text+direct"      75% text + 25% direct citation
+A dict sets custom weights (normalised to sum to 1); "hybrid" gives all four 25%.
 
 Because most pairs have no citation relation, hybrid values are on a different scale than
 S3 (a pair with S3 0.8 and no citation tie scores 0.2 at 25% weights). The threshold scan
@@ -25,15 +29,48 @@ import pandas as pd
 
 COMPONENTS = ("s3", "coupling", "direct", "cocitation")
 EQUAL = {c: 0.25 for c in COMPONENTS}
+NAMES = {"s3": "text (S3)", "coupling": "bibliographic coupling", "cocitation": "co-citation",
+         "direct": "direct citation"}
+
+# The four maps to choose from: text alone (the published method), or 75% text + 25% of one
+# citation relation.
+MAP_OPTIONS = {
+    "text": None,
+    "text+coupling": {"s3": 0.75, "coupling": 0.25},
+    "text+cocitation": {"s3": 0.75, "cocitation": 0.25},
+    "text+direct": {"s3": 0.75, "direct": 0.25},
+}
+_ALIASES = {"s3": "text", "text": "text", "coupling": "text+coupling", "bib": "text+coupling",
+            "bibliographic": "text+coupling", "s3+coupling": "text+coupling", "text+bib": "text+coupling",
+            "cocitation": "text+cocitation", "coc": "text+cocitation", "co-citation": "text+cocitation",
+            "s3+cocitation": "text+cocitation", "text+coc": "text+cocitation",
+            "direct": "text+direct", "s3+direct": "text+direct", "direct citation": "text+direct"}
+
+
+def map_label(w: Optional[Dict[str, float]]) -> str:
+    """'text (S3)' or e.g. '75% text (S3) + 25% co-citation'."""
+    if not w:
+        return "text (S3)"
+    return " + ".join(f"{v:.0%} {NAMES[k]}" for k, v in w.items() if v > 0)
 
 
 def resolve_weights(w: Union[None, str, bool, Dict[str, float]]) -> Optional[Dict[str, float]]:
-    """None/"s3" -> None (pure S3 map); "hybrid"/True -> 25% each; dict -> normalised."""
-    if w is None or w is False or (isinstance(w, str) and w.lower() == "s3"):
+    """The map: None or "text" -> text only (S3, the published method);
+    "text+coupling", "text+cocitation", "text+direct" -> 75% text + 25% of that relation;
+    a dict (or "s3=0.5,coupling=0.5") -> custom weights, normalised; "hybrid" -> 25% each."""
+    if w is None or w is False:
         return None
+    if isinstance(w, str):
+        key = _ALIASES.get(w.strip().lower(), w.strip().lower())
+        if key in MAP_OPTIONS:
+            w = MAP_OPTIONS[key]
+            if w is None:
+                return None
     if w is True or (isinstance(w, str) and w.lower() == "hybrid"):
         return dict(EQUAL)
     if isinstance(w, str):  # "s3=0.5,coupling=0.5"
+        if "=" not in w:
+            raise ValueError(f"Unknown map {w!r}; choose one of {list(MAP_OPTIONS)} or give weights")
         w = {k.strip(): float(v) for k, v in (p.split("=") for p in w.split(",") if p.strip())}
     bad = set(w) - set(COMPONENTS)
     if bad:
@@ -42,7 +79,8 @@ def resolve_weights(w: Union[None, str, bool, Dict[str, float]]) -> Optional[Dic
     if tot <= 0:
         raise ValueError("map_weights must contain a positive weight")
     out = {c: round(max(0.0, float(w.get(c, 0.0))) / tot, 6) for c in COMPONENTS}
-    return None if out == {"s3": 1.0, "coupling": 0.0, "direct": 0.0, "cocitation": 0.0} else out
+    out = {c: v for c, v in out.items() if v > 0}
+    return None if out == {"s3": 1.0} else out
 
 
 def reference_matrix(df: pd.DataFrame):

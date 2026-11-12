@@ -90,7 +90,7 @@ def ktree_spec(res, window_years: int = 5, n_communities: int = 15) -> Optional[
     names = {int(c): _display_name(res, c) for c in kt["communities"]}
     return {"type": "ktree",
             "title": f"Knowledge tree: communities per {window_years}-year window, linked by citations "
-                     f"and S3 similarity (earlier → later)",
+                     f"and {'S3 similarity' if not res.config.map_weights else 'map links'} (earlier → later)",
             "windows": kt["windows"], "communities": kt["communities"], "names": names,
             "nodes": nodes, "links": links,
             "has_citations": bool(res.citation_pairs)}

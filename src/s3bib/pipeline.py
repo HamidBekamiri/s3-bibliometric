@@ -92,8 +92,8 @@ class S3Config:
     mi_denominator: str = "retained"   # MI denominator: links made by retained papers, or "all" links
     dedupe: bool = True                # remove duplicate records before the analysis
     dedupe_threshold: float = 0.98     # S3 at or above this = the same paper (reprints, double indexing)
-    # Map: None = S3 similarity only (the published method); "hybrid" = S3, bibliographic
-    # coupling, direct citation and co-citation at 25% each; or a dict of weights.
+    # Map: "text" (None, S3 similarity only: the published method), "text+coupling",
+    # "text+cocitation" or "text+direct" (75% text + 25% of that citation relation), or a dict.
     map_weights: Optional[Any] = None
     # Citation matching from References text: "lenient" (as in the S3 web app) or "strict"
     # (short titles such as "Introduction" also need the year and first author to match).

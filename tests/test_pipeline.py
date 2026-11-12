@@ -385,19 +385,39 @@ def test_gnn_models_on_real_data(res):
     assert len(top) == 5
 
 
-def test_hybrid_map(df):
-    from s3bib.hybrid import resolve_weights
+def test_four_map_options(df, tmp_path):
+    from s3bib.hybrid import MAP_OPTIONS, map_label, resolve_weights
+    assert list(MAP_OPTIONS) == ["text", "text+coupling", "text+cocitation", "text+direct"]
+    assert resolve_weights("text") is None and resolve_weights(None) is None and resolve_weights("s3") is None
+    assert resolve_weights("text+coupling") == {"s3": 0.75, "coupling": 0.25}
+    assert resolve_weights("coc") == {"s3": 0.75, "cocitation": 0.25}
+    assert resolve_weights("text+direct") == {"s3": 0.75, "direct": 0.25}
+    assert resolve_weights("s3=1,coupling=1") == {"s3": 0.5, "coupling": 0.5}
     assert resolve_weights("hybrid") == {"s3": 0.25, "coupling": 0.25, "direct": 0.25, "cocitation": 0.25}
-    assert resolve_weights("s3=1,coupling=1") == {"s3": 0.5, "coupling": 0.5, "direct": 0.0, "cocitation": 0.0}
-    assert resolve_weights(None) is None and resolve_weights("s3") is None
     with pytest.raises(ValueError):
         resolve_weights({"unicorn": 1})
+    with pytest.raises(ValueError):
+        resolve_weights("unicorn")
+    assert map_label(resolve_weights("text+cocitation")) == "75% text (S3) + 25% co-citation"
     plain = s3bib.run_s3(df, **QUIET)
-    hyb = s3bib.run_s3(df, s3bib.S3Config(map_weights="hybrid"), **QUIET)
-    # each hybrid threshold links about as many pairs as the matching S3 threshold
-    assert [r["n_edges"] for r in hyb.scan][:3] == pytest.approx([r["n_edges"] for r in plain.scan][:3], rel=0.1)
-    assert hyb.graph().number_of_edges() > 0 and len(hyb.communities()) >= 2
-    assert hyb.config.map_weights["coupling"] == 0.25
+    for opt in ("text+coupling", "text+cocitation", "text+direct"):
+        r = s3bib.run_s3(df, s3bib.S3Config(map_weights=opt), **QUIET)
+        # each threshold links about as many pairs as the matching S3 threshold
+        assert [x["n_edges"] for x in r.scan][:3] == pytest.approx([x["n_edges"] for x in plain.scan][:3], rel=0.15)
+        assert r.graph().number_of_edges() > 0
+    # every result follows the chosen map: header, Q1, network map
+    html = r.report(tmp_path / "m.html").read_text()
+    assert "map: 75% text (S3) + 25% direct citation" in html
+    assert "the map score (75% text (S3) + 25% direct citation)" in r.answer("Q1").findings[0]
+    assert "map: text (S3)" in plain.report(tmp_path / "p.html").read_text()
+
+
+def test_sections_closed_and_word_cloud(res, tmp_path):
+    html = res.report(tmp_path / "w.html").read_text()
+    assert "<details open" not in html and "<details>" in html  # everything opens on click
+    wc = [c for c in res.answer("Q6").charts if c["type"] == "wordcloud"][0]
+    assert wc["n"] == 10 and all(len(v["words"]) <= 50 for v in wc["sets"].values())
+    assert 's3WC("' in html and '<option value="50">50 words</option>' in html
 
 
 def test_strict_citation_matching(df):

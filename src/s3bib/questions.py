@@ -88,6 +88,13 @@ def _name(res, c) -> str:
     return f"C{c} {lab}".strip()
 
 
+def _map_score(res) -> str:
+    """What the map threshold applies to: 'S3', or the hybrid score with its mix."""
+    from .hybrid import map_label
+    w = res.config.map_weights
+    return "S3" if not w else f"the map score ({map_label(w)})"
+
+
 def _display_name(res, c, n_terms: int = 3) -> str:
     """Name shown on graphs: the saved label, or else the community's top c-TF-IDF terms."""
     c = int(c)
@@ -271,7 +278,10 @@ def _network_spec(res, n_comms: int = 20, max_edges: int = 20000) -> Optional[Di
     edges = [[idx[u], idx[v]] for u, v in G.edges() if u in idx and v in idx][:max_edges]
     legend = [{"id": int(c), "name": _display_name(res, c), "n": len(members[c])} for c in comms
               if c < res.config.top_n_communities]
-    return {"type": "network", "title": f"S3 network map (paper Panel 1): {len(order)} papers in the "
+    from .hybrid import map_label
+    kind = "S3 network map (paper Panel 1)" if not res.config.map_weights else \
+        f"Network map ({map_label(res.config.map_weights)})"
+    return {"type": "network", "title": f"{kind}: {len(order)} papers in the "
                                         f"{len(comms)} largest communities; top {len(legend)} in colour",
             "nodes": nodes, "edges": edges, "legend": legend}
 
@@ -306,11 +316,15 @@ def q_threshold(res) -> Answer:
         return a
     b = res.best
     sii_best = scan.loc[scan["sii"].idxmax()]
-    head = (f"The threshold is fixed at S3 ≥ {b['threshold']:.2f} (SII = {b['sii']:.1f}); the highest SII in "
+    ms = _map_score(res)
+    head = (f"The threshold is fixed at {ms} ≥ {b['threshold']:.2f} (SII = {b['sii']:.1f}); the highest SII in "
             f"the scan is at {sii_best['threshold']:.2f} (SII = {sii_best['sii']:.1f})." if b.get("fixed") else
-            f"The best threshold is S3 ≥ {b['threshold']:.2f} (highest SII = {b['sii']:.1f}).")
+            f"The best threshold is {ms} ≥ {b['threshold']:.2f} (highest SII = {b['sii']:.1f}).")
+    a.findings += [head]
+    if res.config.map_weights:
+        a.findings.append("The map combines text similarity with citation relations; its thresholds link as many "
+                          "pairs as the S3 thresholds 0.75-0.85 would on this corpus, so the scan is comparable.")
     a.findings += [
-        head,
         f"At this threshold {b['n_papers']} of {len(res.papers)} papers "
         f"({b['n_papers'] / len(res.papers):.0%}) fall into {b['n_communities']} communities, "
         f"with a silhouette of {b['silhouette']:.3f}.",
@@ -329,7 +343,7 @@ def q_threshold(res) -> Answer:
     a.tables["Threshold scan"] = scan.round(4)
     a.chart = {"type": "line", "title": "Sensitivity Inclusion Index across thresholds (paper Fig. 3)",
                "x": scan["threshold"].tolist(), "series": {"SII": scan["sii"].round(2).tolist()},
-               "x_label": "S3 threshold", "mark": b["threshold"],
+               "x_label": "S3 threshold" if not res.config.map_weights else "map threshold", "mark": b["threshold"],
                "mark_label": f"{'fixed' if b.get('fixed') else 'best'} {b['threshold']:.2f}"}
     return a
 
@@ -515,6 +529,19 @@ def q_topics(res) -> Answer:
     a.findings.append("Each community is described by its most distinctive title/abstract terms "
                       "and its most frequent author keywords. Use these with Q7 to name communities.")
     a.tables["Topic profile per community"] = t
+    sets = {}
+    kw = Counter(k.strip().lower() for v in res.papers["keywords"].dropna() for k in str(v).split(";") if k.strip())
+    if kw:
+        sets["Whole field: author keywords"] = {"words": [[k, int(n)] for k, n in kw.most_common(50)], "color": -1}
+    for c in _main_comms(res, 10):
+        terms = res.top_terms(c, 50)
+        if terms:
+            sets[_display_name(res, c) + ": distinctive terms"] = {"words": [[w, round(float(v), 3)] for w, v in terms],
+                                                                   "color": int(c)}
+    if sets:
+        a.charts.append({"type": "wordcloud", "title": "Word cloud: choose a community and how many words "
+                                                       "(size = c-TF-IDF weight, or keyword frequency for the field)",
+                         "sets": sets, "n": 10})
     return a
 
 

@@ -54,10 +54,11 @@ def main(argv=None) -> None:
     sc.add_argument("--scopus", action="store_true", help="Exact citations from the Scopus API (SCOPUS_API_KEY)")
     sc.add_argument("--no-scopus", action="store_true", help="Don't ask about the Scopus API")
     r.add_argument("--seed", type=int, default=42)
-    r.add_argument("--map", default="s3",
-                   help="Map relations: s3 (default, the published method), hybrid (S3 + bibliographic "
-                        "coupling + direct citation + co-citation, 25%% each) or weights such as "
-                        "'s3=0.5,coupling=0.25,cocitation=0.25'")
+    r.add_argument("--map", default="text",
+                   help="Which relations build the map: text (default: S3 text similarity, the published "
+                        "method), text+coupling, text+cocitation or text+direct (75%% text + 25%% "
+                        "bibliographic coupling, co-citation or direct citation). Every result in the "
+                        "report follows this choice.")
     r.add_argument("--strict-citations", action="store_true",
                    help="Short titles (e.g. 'Introduction') only count as cited when year and first author match")
     r.add_argument("--prediction", action="store_true",

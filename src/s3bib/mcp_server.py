@@ -101,7 +101,7 @@ def run_s3_analysis(
     community_method: str = "leiden",
     embedding_model: str = "mpnet",
     remove_duplicates: bool = True,
-    map_relations: str = "s3",
+    map_relations: str = "text",
     strict_citations: bool = False,
 ) -> Dict[str, Any]:
     """Run the S3 pipeline on a Scopus CSV/Excel export (needs Title and Abstract;
@@ -114,9 +114,10 @@ def run_s3_analysis(
     to reproduce the S3 web app. embedding_model is a key from list_embedding_models or
     any sentence-transformers model name (ask the user first; default mpnet). Records
     without title and abstract are dropped and duplicates (same DOI/EID/text, or S3 >= 0.98)
-    are removed unless remove_duplicates=False. map_relations="hybrid" builds the map from
-    S3 + bibliographic coupling + direct citation + co-citation (25% each), or pass weights
-    like "s3=0.5,coupling=0.5"; default "s3" is the published method. strict_citations=True
+    are removed unless remove_duplicates=False. map_relations chooses the map, and every
+    answer and report follows it: "text" (default; S3 text similarity, the published method),
+    "text+coupling", "text+cocitation" or "text+direct" (75% text + 25% bibliographic
+    coupling, co-citation or direct citation). strict_citations=True
     stops short titles such as "Introduction" from matching unrelated references. Can take several minutes
     for thousands of papers the first time; embeddings are cached afterwards.
 
@@ -128,7 +129,7 @@ def run_s3_analysis(
     stem = re.sub(r"[^A-Za-z0-9_-]+", "_", p.stem)[:40]
     key = (f"{p.resolve()}|{p.stat().st_size}|{start_year}|{end_year}|{seed}|{threshold}|"
            f"{community_method}|{embedding_model}|{remove_duplicates}")
-    if map_relations != "s3" or strict_citations:  # keeps earlier run ids unchanged
+    if map_relations not in ("s3", "text") or strict_citations:  # keeps earlier run ids unchanged
         key += f"|{map_relations}|{strict_citations}"
     run_id = f"{stem}_{hashlib.sha1(key.encode()).hexdigest()[:8]}"
 

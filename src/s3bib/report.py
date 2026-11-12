@@ -439,11 +439,60 @@ function s3KTree(id, mode){
 """
 
 
+_WC_N = [0]
+
+
+def _wordcloud(spec: Dict[str, Any]) -> str:
+    _WC_N[0] += 1
+    wid = f"s3wc{_WC_N[0]}"
+    sets = {k: {"words": v["words"], "color": _col(v["color"]) if v["color"] >= 0 else "var(--acc)"}
+            for k, v in spec["sets"].items()}
+    data = json.dumps(sets, separators=(",", ":")).replace("</", "<\\/")
+    opts = "".join(f'<option value="{_e(k)}">{_e(k)}</option>' for k in sets)
+    ns = "".join(f'<option value="{k}"{" selected" if k == spec.get("n", 10) else ""}>{k} words</option>'
+                 for k in (10, 20, 30, 50))
+    return (f'<div class="wc" id="{wid}"><div class="tv-bar"><select class="wc-set" aria-label="Words of">{opts}</select>'
+            f'<select class="wc-n" aria-label="Number of words">{ns}</select></div>'
+            f'<svg class="wc-svg" viewBox="0 0 640 300" role="img" aria-label="{_e(spec.get("title"))}"></svg></div>'
+            f'<script type="application/json" id="{wid}-data">{data}</script><script>s3WC("{wid}")</script>')
+
+
+WC_JS = r"""
+<script>
+function s3WC(id){
+  const box=document.getElementById(id), d=JSON.parse(document.getElementById(id+'-data').textContent);
+  const svg=box.querySelector('svg'), set=box.querySelector('.wc-set'), num=box.querySelector('.wc-n');
+  const ctx=document.createElement('canvas').getContext('2d'), W=640, H=300;
+  function draw(){
+    const s=d[set.value], ws=s.words.slice(0,+num.value);
+    const mx=Math.max(...ws.map(w=>w[1])), mn=Math.min(...ws.map(w=>w[1]));
+    const big=ws.length<=10?46:ws.length<=20?38:ws.length<=30?32:26, small=ws.length<=10?16:11;
+    const placed=[]; let out='';
+    ws.forEach(([w,v],k)=>{
+      const fs=Math.round(small+(big-small)*Math.sqrt((v-mn)/((mx-mn)||1)));
+      ctx.font=`600 ${fs}px system-ui,-apple-system,sans-serif`;
+      const tw=ctx.measureText(w).width, th=fs*0.9;
+      for(let t=0;t<2400;t++){
+        const a=0.32*t, r=1.6*a, x=W/2+r*Math.cos(a)*1.6-tw/2, y=H/2+r*Math.sin(a)*0.9;
+        const b=[x-2,y-th-2,x+tw+2,y+3];
+        if(b[0]<2||b[2]>W-2||b[1]<2||b[3]>H-2)continue;
+        if(placed.some(p=>!(b[2]<p[0]||b[0]>p[2]||b[3]<p[1]||b[1]>p[3]))) continue;
+        placed.push(b);
+        const op=(0.55+0.45*(v-mn)/((mx-mn)||1)).toFixed(2);
+        out+=`<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" font-size="${fs}" font-weight="600" fill="${s.color}" fill-opacity="${op}"><title>${w.replace(/&/g,'&amp;').replace(/</g,'&lt;')}: ${v}</title>${w.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</text>`;
+        break;}});
+    svg.innerHTML=out;}
+  set.addEventListener('change',draw); num.addEventListener('change',draw); draw();
+}
+</script>
+"""
+
+
 def _chart(spec: Optional[Dict[str, Any]]) -> str:
     if not spec:
         return ""
     fn = {"bar": _bar, "line": _line, "heatmap": _heat, "stack": _stack, "sankey": _sankey,
-          "network": _network, "ktree": _ktree}.get(spec["type"])
+          "network": _network, "ktree": _ktree, "wordcloud": _wordcloud}.get(spec["type"])
     body = fn(spec) if fn else ""
     return f'<figure><figcaption>{_e(spec.get("title"))}</figcaption>{body}</figure>' if body else ""
 
@@ -486,7 +535,7 @@ def _table(name: str, df: pd.DataFrame, max_rows: int = 20) -> str:
     table = f'<div class="tw"><table><tr>{head}</tr>{"".join(body)}</table></div>'
     cc = _chart_columns(d)
     if cc is None:
-        return f'<details open><summary>{_e(name)}</summary>{table}{more}</details>'
+        return f'<details><summary>{_e(name)}</summary>{table}{more}</details>'
     label, cols = cc
     _TV_N[0] += 1
     tid = f"s3tv{_TV_N[0]}"
@@ -506,7 +555,7 @@ def _table(name: str, df: pd.DataFrame, max_rows: int = 20) -> str:
     opts = "".join(f'<option value="{_e(c)}">{_e(c)}</option>' for c in cols)
     sel = (f'<label>Plot <select aria-label="Column to plot">{opts}</select></label>' if len(cols) > 1
            else f'<span class="mut">{_e(cols[0])}</span>')
-    return (f'<details open><summary>{_e(name)}</summary><div class="tv" id="{tid}" data-view="chart">'
+    return (f'<details><summary>{_e(name)}</summary><div class="tv" id="{tid}" data-view="chart">'
             f'<div class="tv-bar"><button type="button" data-v="chart" class="on">Chart</button>'
             f'<button type="button" data-v="table">Table</button>{sel}</div>'
             f'<div class="tv-chart"></div><div class="tv-table">{table}</div></div>{more}'
@@ -564,7 +613,10 @@ figure{margin:0}figcaption{font-size:.85rem;color:var(--mut);margin-bottom:4px}
 .chart{width:100%;max-width:680px;height:auto}.chart text{font-size:11px;fill:var(--mut)}.chart .lab{fill:var(--fg)}
 .chart .axis{stroke:var(--mut)}.chart .grid{stroke:var(--line)}
 .legend{display:flex;flex-wrap:wrap;gap:12px;font-size:.8rem;color:var(--mut)}.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px}
+details{border:1px solid var(--line);border-radius:6px;padding:4px 10px;margin:8px 0;background:var(--card)}
 details summary{cursor:pointer;font-size:.9rem;font-weight:600;margin:4px 0}
+details:not([open]) summary::after{content:" — click to open";font-weight:400;color:var(--mut)}
+.wc-svg{width:100%;height:auto;display:block;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
 .tw{overflow-x:auto;max-width:100%}table{border-collapse:collapse;font-size:.82rem;width:100%}
 th,td{border-bottom:1px solid var(--line);padding:5px 8px;text-align:left;vertical-align:top}th{color:var(--mut);font-weight:600}
 td.n{text-align:right;font-variant-numeric:tabular-nums}table.heat td{text-align:center;min-width:46px}
@@ -666,13 +718,14 @@ def build_report(res, path: Union[str, Path], title: Optional[str] = None,
         body.append(f'<section class="q" id="{q.qid}">{head}<ul class="f">{findings}</ul>'
                     f'{_chart(a.chart)}{"".join(_chart(c) for c in a.charts)}{tables}</section>')
     thr = f"{res.best['threshold']:.2f}" if res.best else "n/a"
+    from .hybrid import map_label
     planned = "".join(f"<li>{_e(p)} <span class='mut'>({_e(s)})</span></li>" for p, s in PLANNED)
     doc = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>{_e(title)}</title><style>{CSS}</style>
 <script src="{FORCE_GRAPH_CDN}"></script></head>
-<body>{NET_JS}{FG_JS}{KT_JS}{TV_JS}<div class="wrap">
+<body>{NET_JS}{FG_JS}{KT_JS}{TV_JS}{WC_JS}<div class="wrap">
 <h1>{_e(title)}</h1>
-<p class="mut">{n} papers · {span} · best S3 threshold {thr} ·
+<p class="mut">{n} papers · {span} · map: {_e(map_label(res.config.map_weights))} · best threshold {thr} ·
 {int(res.papers['community'].notna().sum())} clustered papers in {len(res.communities())} communities · generated {date.today()} with s3-bibliometric</p>
 <div class="tv-global">Show results as <button type="button" data-v="chart" onclick="s3TVAll('chart')">Charts</button><button type="button" data-v="table" onclick="s3TVAll('table')">Tables</button></div>
 <script>document.querySelectorAll('.tv-global button').forEach(x=>x.classList.toggle('on',x.dataset.v===s3TVPref()));</script>
