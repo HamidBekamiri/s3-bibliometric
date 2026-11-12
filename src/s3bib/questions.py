@@ -1291,10 +1291,16 @@ def question_table(res, available_only: bool = False, prediction: Optional[bool]
     return t[t["available"]] if available_only else t
 
 
-def answer(res, qid: str) -> Answer:
+PREDICTION_OFF = ("Prediction questions (Q24-Q34) are off. Enable them with "
+                  "S3Config(prediction=True), or answer(..., prediction=True).")
+
+
+def answer(res, qid: str, prediction: Optional[bool] = None) -> Answer:
     q = _BY_ID.get(qid.upper())
     if q is None:
         raise ValueError(f"Unknown question {qid}. Valid: {', '.join(_BY_ID)}")
+    if q.prediction and not prediction_on(res, prediction):
+        return Answer(q.qid, q.text, findings=[PREDICTION_OFF])
     ok, why = available(res, q)
     if not ok:
         return Answer(q.qid, q.text, findings=[f"Not available for this dataset. {why}"])

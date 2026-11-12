@@ -63,13 +63,14 @@ def main(argv=None) -> None:
     r.add_argument("--prediction", action="store_true",
                    help="Add link prediction and GNN questions (Q24-Q34) to the report")
     r.add_argument("--save", help="Also save the run to this folder (reload with S3Result.load)")
-    sub.add_parser("questions", help="List the ranked research questions")
+    qp = sub.add_parser("questions", help="List the ranked research questions")
+    qp.add_argument("--prediction", action="store_true", help="Also list the prediction questions (Q24-Q34)")
     sub.add_parser("models", help="List the embedding models you can choose")
     a = p.parse_args(argv)
 
     if a.cmd == "questions":
         from .questions import QUESTIONS, STAGES
-        for k, q in enumerate(QUESTIONS, 1):
+        for k, q in enumerate([q for q in QUESTIONS if a.prediction or not q.prediction], 1):
             print(f"{k:>2}. {q.qid:<4} [{STAGES[q.stage]} · {q.priority}] {q.text}")
         return
     if a.cmd == "models":

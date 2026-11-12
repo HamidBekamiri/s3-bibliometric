@@ -657,7 +657,7 @@ def build_report(res, path: Union[str, Path], title: Optional[str] = None,
             body.append(f'<section class="q na" id="{q.qid}">{head}<p class="mut">Not available: {_e(why)}</p></section>')
             continue
         try:
-            a = answer(res, q.qid)
+            a = answer(res, q.qid, prediction=show_pred or None)
         except Exception as ex:  # keep the report going
             body.append(f'<section class="q na" id="{q.qid}">{head}<p class="mut">Could not compute: {_e(ex)}</p></section>')
             continue

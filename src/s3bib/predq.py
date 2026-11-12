@@ -2,7 +2,7 @@
 
 These questions are off by default: enable them with S3Config(prediction=True),
 res.report(..., prediction=True), `s3bib report --prediction` or, in Claude,
-build_report(prediction=True). res.answer("Q30") always works.
+build_report(prediction=True). A single one: res.answer("Q30", prediction=True).
 """
 from __future__ import annotations
 

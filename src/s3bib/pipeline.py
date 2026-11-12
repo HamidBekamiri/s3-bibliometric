@@ -540,18 +540,24 @@ class S3Result:
         from .questions import question_table
         return question_table(self, available_only, prediction)
 
-    def find_experts(self, text: str, kind: str = "author", n: int = 10) -> pd.DataFrame:
+    def find_experts(self, text: str, kind: str = "author", n: int = 10,
+                     prediction: Optional[bool] = None) -> pd.DataFrame:
         """Authors (or institutions, funders, keywords, journals) whose work best fits a text,
-        from the R-GCN knowledge-graph embeddings (Q32)."""
+        from the R-GCN knowledge-graph embeddings (Q32). A prediction feature: needs
+        config.prediction=True or prediction=True."""
+        from .questions import PREDICTION_OFF, prediction_on
+        if not prediction_on(self, prediction):
+            raise RuntimeError(PREDICTION_OFF)
         from .gnn import find_experts
         return find_experts(self, text, kind, n)
 
-    def answer(self, qid: str):
+    def answer(self, qid: str, prediction: Optional[bool] = None):
         """Answer one question, e.g. res.answer("Q7"). Returns an Answer
-        with .findings (sentences), .tables (DataFrames) and .chart."""
+        with .findings (sentences), .tables (DataFrames) and .chart.
+        Prediction questions (Q24-Q34) need config.prediction=True or prediction=True."""
         from .questions import answer
         set_seed(self.config.seed)
-        return answer(self, qid)
+        return answer(self, qid, prediction)
 
     def network(self, kind: str = "kg"):
         """One of the networks behind S3 as a networkx MultiDiGraph:

@@ -165,18 +165,24 @@ From the command line:
 s3bib report scopus.csv -o report.html
 ```
 
-**Prediction (stages 7–8) is off by default.** It adds a few minutes and answers forecasting
-questions, so it appears only when you ask for it:
+**Prediction (stages 7–8) is off by default** (`S3Config(prediction=False)`). Until you
+switch it on, Q24–Q34 do not appear in the question list, the report, the CLI or Claude, and
+asking for one returns a note that prediction is off. Switch it on for a whole run, or for
+one call:
 
 ```python
-res = s3bib.run_s3("scopus.csv", s3bib.S3Config(prediction=True))   # or:
-res.report("report.html", prediction=True)
-res.answer("Q30")                                   # a single prediction question always works
+res = s3bib.run_s3("scopus.csv", s3bib.S3Config(prediction=True))   # everything on for this run
+res.report("report.html")                    # then includes Q24–Q34
+res.answer("Q30")
 res.find_experts("board diversity and green innovation", kind="author")   # R-GCN (Q32)
+
+res.report("report.html", prediction=True)   # or per call, on a run without it
+res.answer("Q30", prediction=True)
 ```
 
 ```bash
 s3bib report scopus.csv --prediction
+s3bib questions --prediction
 ```
 
 Every prediction is tested honestly before it is used: the corpus is split in time (the last

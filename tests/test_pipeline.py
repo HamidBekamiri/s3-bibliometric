@@ -326,7 +326,7 @@ def test_citation_prediction(res):
     assert s3["ROC AUC"] > 0.7 > t.loc["Random", "ROC AUC"]
     assert {"forecast", "reference point", "baseline"} == set(t["type"])
     assert r["table"].equals(citation_prediction(res)["table"])  # seeded: same result every run
-    a = res.answer("Q24")
+    a = res.answer("Q24", prediction=True)
     assert "ROC AUC" in a.findings[1] and a.chart["type"] == "line"
 
 
@@ -336,12 +336,34 @@ def test_prediction_questions(res, tmp_path):
     from s3bib.questions import QUESTIONS
     pred = [q.qid for q in QUESTIONS if q.prediction]
     assert pred == [f"Q{i}" for i in range(24, 35)]
+    assert res.config.prediction is False  # off by default
+    for qid in pred:
+        off = res.answer(qid)
+        assert off.findings[0].startswith("Prediction questions (Q24-Q34) are off") and not off.tables
+    with pytest.raises(RuntimeError):
+        res.find_experts("absorptive capacity")
+    assert not any(q in res.report(tmp_path / "d.html").read_text() for q in ('id="Q24"', 'id="Q30"'))
     for qid in pred[1:]:
-        a = res.answer(qid)  # direct calls always work
-        assert a.findings, qid
+        a = res.answer(qid, prediction=True)  # switched on for one call
+        assert a.findings and not a.findings[0].startswith("Prediction questions"), qid
         a.to_dict()
     html = res.report(tmp_path / "p.html", prediction=True).read_text()
     assert 'id="Q30"' in html and "Could not compute" not in html
+
+
+def test_prediction_switched_on_in_config(df):
+    r = s3bib.run_s3(df, s3bib.S3Config(prediction=True), **QUIET)
+    assert "Q30" in set(r.questions()["id"])
+    assert not r.answer("Q24").findings[0].startswith("Prediction questions")
+
+
+def test_cli_lists_prediction_only_when_asked(capsys):
+    from s3bib.cli import main
+    main(["questions"])
+    plain = capsys.readouterr().out
+    main(["questions", "--prediction"])
+    full = capsys.readouterr().out
+    assert "Q23" in plain and "Q24" not in plain and "Q34" in full
 
 
 def test_link_prediction_evaluation():

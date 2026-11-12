@@ -334,10 +334,13 @@ def list_questions(run_id: str, include_prediction: bool = False) -> List[Dict[s
 
 
 @mcp.tool()
-def answer_question(run_id: str, question_id: str, max_rows: int = 20) -> Dict[str, Any]:
+def answer_question(run_id: str, question_id: str, max_rows: int = 20,
+                    prediction: bool = False) -> Dict[str, Any]:
     """Answer one ranked question, e.g. "Q8" (foundational papers) or "Q21"
-    (interdisciplinarity). Returns findings (plain sentences) and result tables."""
-    return _get(run_id).answer(question_id).to_dict(max_rows=max_rows)
+    (interdisciplinarity). Returns findings (plain sentences) and result tables.
+    The prediction questions Q24-Q34 are off unless prediction=True (only when the user
+    asks for prediction)."""
+    return _get(run_id).answer(question_id, prediction=prediction or None).to_dict(max_rows=max_rows)
 
 
 @mcp.tool()
