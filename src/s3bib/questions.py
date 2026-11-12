@@ -606,41 +606,61 @@ def q_growth(res) -> Answer:
 
 
 def q_concepts(res) -> Answer:
+    """Rising/fading concepts: share of papers using a keyword in the last 5 years vs before."""
     a = Answer("Q14", "")
-    P = res.papers.dropna(subset=["year"])
-    kw = [(int(y), k.lower()) for y, v in zip(P["year"], P["keywords"]) for k in _split(v) if len(k) > 2]
-    if not kw:
+    P = res.papers.dropna(subset=["year"]).copy()
+    P["kws"] = [set(k.lower() for k in _split(v) if len(k) > 2) for v in P["keywords"]]
+    P = P[P["kws"].map(len) > 0]
+    if P.empty:
         a.findings.append("No author keywords in the export.")
         return a
-    df = pd.DataFrame(kw, columns=["year", "keyword"])
-    top = df["keyword"].value_counts().head(30).index
     per_year = P.groupby("year").size()
+    kept = per_year[per_year >= 20].index
+    if len(kept) < 6:
+        kept = per_year.index
+    P = P[P["year"].isin(kept)]
+    last = sorted(kept)[-5:]
+    recent, earlier = P[P["year"].isin(last)], P[~P["year"].isin(last)]
+    counts = Counter(k for ks in P["kws"] for k in ks)
+    n = len(P)
     rows = []
-    for k in top:
-        s = df[df["keyword"] == k].groupby("year").size().reindex(per_year.index, fill_value=0)
-        share = (s / per_year).to_numpy()
-        x = per_year.index.to_numpy(dtype=float)
-        slope = float(np.polyfit(x, share, 1)[0]) if len(x) > 2 else 0.0
-        comm = Counter(res.papers.loc[res.papers["keywords"].fillna("").str.lower().str.contains(re.escape(k)),
-                                      "community"].dropna().astype(int))
-        rows.append({"keyword": k, "papers": int(s.sum()), "first year": int(s.index[s > 0].min()),
-                     "trend (share per year)": round(slope, 4),
+    for k, cnt in counts.most_common(80):
+        if cnt < 10:
+            break
+        r = sum(k in ks for ks in recent["kws"]) / max(1, len(recent))
+        e = sum(k in ks for ks in earlier["kws"]) / max(1, len(earlier))
+        has = P[P["kws"].map(lambda ks: k in ks)]
+        comm = Counter(has["community"].dropna().astype(int))
+        rows.append({"keyword": k, "papers": cnt, "share of papers": round(cnt / n, 3),
+                     "first year": int(has["year"].min()),
+                     f"share {int(last[0])}-{int(last[-1])}": round(r, 4), "share before": round(e, 4),
+                     "growth (recent / before)": round(r / e, 2) if e > 0 else float("inf"),
                      "communities": len(comm),
                      "main community": _name(res, comm.most_common(1)[0][0]) if comm else ""})
-    t = pd.DataFrame(rows).sort_values("trend (share per year)", ascending=False)
-    rising = t[t["trend (share per year)"] > 0].head(5)["keyword"].tolist()
-    fading = t[t["trend (share per year)"] < 0].tail(5)["keyword"].tolist()
-    if rising:
-        a.findings.append("Rising concepts: " + ", ".join(rising) + ".")
-    if fading:
-        a.findings.append("Fading concepts: " + ", ".join(fading) + ".")
-    spread = t.sort_values("communities", ascending=False).iloc[0]
-    a.findings.append(f"The most widely diffused concept is “{spread['keyword']}”, used in "
-                      f"{spread['communities']} communities.")
+    t = pd.DataFrame(rows)
+    if t.empty:
+        a.findings.append("No keyword is used by at least 10 papers.")
+        return a
+    t = t.sort_values("growth (recent / before)", ascending=False)
+    specific = t[t["share of papers"] < 0.10]  # leave out near-universal search terms
+    rising = specific[specific["growth (recent / before)"] >= 1.5].head(6)
+    fading = specific[specific["growth (recent / before)"] <= 0.67].sort_values("growth (recent / before)").head(6)
+    span = f"{int(last[0])}-{int(last[-1])}"
+    if len(rising):
+        a.findings.append(f"Rising concepts (share of papers in {span} vs before): " + ", ".join(
+            f"{k} (×{g:.1f})" if g != float("inf") else f"{k} (new)"
+            for k, g in zip(rising["keyword"], rising["growth (recent / before)"])) + ".")
+    if len(fading):
+        a.findings.append("Fading concepts: " + ", ".join(
+            f"{k} (×{g:.2f})" for k, g in zip(fading["keyword"], fading["growth (recent / before)"])) + ".")
+    if len(specific):
+        spread = specific.sort_values("communities", ascending=False).iloc[0]
+        a.findings.append(f"The most widely diffused specific concept is “{spread['keyword']}”, used in "
+                          f"{spread['communities']} communities.")
     a.tables["Concept trends (RQ5)"] = t
-    a.chart = {"type": "bar", "title": "Keyword trend (change in share of papers per year)",
-               "labels": t["keyword"].head(12).tolist(),
-               "values": t["trend (share per year)"].head(12).round(4).tolist()}
+    chart = specific[np.isfinite(specific["growth (recent / before)"])].head(12)
+    a.chart = {"type": "bar", "title": f"Keyword growth: share in {span} ÷ share before",
+               "labels": chart["keyword"].tolist(), "values": chart["growth (recent / before)"].tolist()}
     return a
 
 
@@ -848,9 +868,9 @@ def q_integration(res) -> Answer:
     a.findings.append("Integration is the Rao-Stirling diversity of each paper's S3 links across "
                       "communities, weighted by how different those communities are (1 - mean S3). "
                       "It needs no subject categories.")
-    big = t[t["papers"] >= 5]
+    big = t[t["papers"] >= 10]
     if len(big) >= 2:
-        a.findings.append(f"Among communities with at least 5 papers, the most interdisciplinary is "
+        a.findings.append(f"Among communities with at least 10 papers, the most interdisciplinary is "
                           f"{_name(res, big.iloc[0]['community'])} and the most self-contained is "
                           f"{_name(res, big.iloc[-1]['community'])}.")
     top = P.dropna(subset=["integration"]).sort_values("integration", ascending=False).head(15)
@@ -878,10 +898,12 @@ def q_integration_impact(res) -> Answer:
     if np.isnan(rho):
         a.findings.append("Integration or citations do not vary enough to test a relationship.")
         return a
+    strength = "negligible" if abs(rho) < 0.1 else "weak" if abs(rho) < 0.3 else "moderate" if abs(rho) < 0.5 else "strong"
+    sig = "statistically significant" if p < 0.05 else "not statistically significant"
     a.findings.append(f"Spearman correlation between integration and citations per year: "
-                      f"ρ = {rho:.2f} (p = {p:.3f}).")
-    a.findings.append("Positive ρ means papers that connect communities tend to be cited more "
-                      "(age-adjusted).")
+                      f"ρ = {rho:.2f} (p = {p:.3f}): a {strength}, {sig} relationship.")
+    a.findings.append("A positive ρ would mean that papers connecting communities are cited more "
+                      "(age-adjusted); compare the medians in the table.")
     a.tables["Integration vs impact"] = g
     return a
 
@@ -895,8 +917,16 @@ def q_integration_trend(res) -> Answer:
     y = P.groupby("year")["integration"].agg(["mean", "size"]).reset_index()
     y["year"] = y["year"].astype(int)
     slope = float(np.polyfit(y["year"], y["mean"], 1)[0]) if len(y) > 2 else 0.0
-    a.findings.append(f"Mean integration changes by {slope:+.4f} per year: the field is becoming "
-                      f"{'more' if slope > 0 else 'less'} interdisciplinary.")
+    base = float(y["mean"].mean()) or 1e-9
+    rel10 = slope * 10 / base
+    trend = "roughly stable" if abs(rel10) < 0.2 else ("becoming more interdisciplinary" if slope > 0
+                                                        else "becoming less interdisciplinary")
+    a.findings.append(f"Mean integration changes by {slope:+.5f} per year ({rel10:+.0%} per decade "
+                      f"relative to its average): the field is {trend}.")
+    share_int = float((P["integration"] > 0).mean())
+    if share_int < 0.1:
+        a.findings.append(f"Only {share_int:.0%} of linked papers connect to more than one community, so "
+                          "this trend rests on few papers.")
     a.tables["Integration by year"] = y.rename(columns={"mean": "mean integration", "size": "papers"}).round(4)
     a.chart = {"type": "line", "title": "Mean integration by year", "x": y["year"].tolist(),
                "series": {"integration": y["mean"].round(4).tolist()}, "x_label": "year"}

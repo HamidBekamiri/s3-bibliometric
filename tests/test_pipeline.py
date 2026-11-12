@@ -89,3 +89,17 @@ def test_time_questions_skipped_for_single_year(df, monkeypatch):
     res = s3bib.run_s3(df.assign(Year=2027), progress=lambda s, p: None)
     for qid in ("Q13", "Q23"):
         assert "fewer than 3 publication years" in res.answer(qid).findings[0]
+
+
+def test_concept_trends_ignore_search_terms(df, monkeypatch):
+    monkeypatch.setattr(pipeline, "embed_texts", _fake_embed)
+    years = list(range(2010, 2023))
+    rows = []
+    for k, y in enumerate(years * 30):
+        kws = ["innovation"] + ((["green innovation"] if y >= 2018 else ["networks"]) if k % 12 == 0 else [])
+        rows.append({"Title": f"T{k % 3} p{k}", "Abstract": "x", "Year": y, "Cited by": 1,
+                     "EID": f"e{k}", "Author Keywords": "; ".join(kws)})
+    res = s3bib.run_s3(pd.DataFrame(rows), progress=lambda s, p: None)
+    f = " ".join(res.answer("Q14").findings)
+    assert "green innovation" in f.split("Fading")[0] and "networks" in f.split("Fading")[1]
+    assert "innovation (" not in f.replace("green innovation (", "")
