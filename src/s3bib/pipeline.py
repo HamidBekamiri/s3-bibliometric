@@ -55,6 +55,8 @@ _COLUMNS = {
     "keywords": ["Author Keywords", "authkeywords", "Keywords"],
     "source": ["Source Title", "source_title", "Journal", "Publication Title"],
     "doi": ["DOI"],
+    "funding": ["Funding Details", "Funding Texts", "Funding Text", "Funding Orgs",
+                "funding_details", "Funding"],
 }
 
 
@@ -283,6 +285,37 @@ class S3Result:
     config: S3Config
     citation_pairs: List[tuple[int, int]] = field(default_factory=list)
     labels: Dict[int, str] = field(default_factory=dict)  # human / LLM community labels
+
+    # ---- graph & guided questions -----------------------------------------
+    def s3(self, directed: bool = True) -> np.ndarray:
+        """The S3 matrix (recomputed from the stored embeddings)."""
+        s = s3_matrix(self.embeddings)
+        if directed and self.config.temporal_mask:
+            s = apply_temporal_mask(s, self.papers["year"].to_numpy(dtype=float))
+        return s
+
+    def graph(self) -> nx.Graph:
+        """The S3 similarity graph at the chosen threshold (cached)."""
+        if getattr(self, "_graph", None) is None:
+            t = self.best["threshold"] if self.best else 1.01
+            self._graph = build_graph(self.s3(), t)
+        return self._graph
+
+    def questions(self, available_only: bool = False) -> pd.DataFrame:
+        """The ranked research questions S3 can answer, and whether this data supports each."""
+        from .questions import question_table
+        return question_table(self, available_only)
+
+    def answer(self, qid: str):
+        """Answer one question, e.g. res.answer("Q7"). Returns an Answer
+        with .findings (sentences), .tables (DataFrames) and .chart."""
+        from .questions import answer
+        return answer(self, qid)
+
+    def report(self, path: Union[str, Path], title: Optional[str] = None) -> Path:
+        """Answer every available question and write one self-contained HTML report."""
+        from .report import build_report
+        return build_report(self, path, title)
 
     # ---- views -----------------------------------------------------------
     def communities(self, min_size: int = 2) -> pd.DataFrame:

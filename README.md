@@ -21,6 +21,35 @@ label the communities and write up the intellectual structure.
 
 Louvain uses a fixed seed (default 42), so results are reproducible.
 
+## The guided pipeline: 23 research questions
+
+Every analysis answers one research question. Go through them in order, or jump to the
+ones you need. Questions whose data is missing from your export are skipped and say why.
+
+| Stage | Questions |
+|---|---|
+| **1. Trust the map** | Q1 Best similarity threshold (SII) · Q2 Strength of the community structure (silhouette, modularity) · Q3 Papers that don't belong · Q4 Agreement with bibliographic coupling and co-citation |
+| **2. Map the field** | Q5 Main communities · Q6 What each is about · Q7 Core papers (centrality) · Q8 Foundational papers, local vs global (Table 3) · Q9 How close communities are |
+| **3. Knowledge flows** | Q10 Citation flows, QI and MI (Table 2) · Q11 Knowledge gaps (similar but not citing) · Q12 Papers that bridge communities |
+| **4. Evolution** | Q13 Emerging, growing and declining communities · Q14 Rising and fading concepts |
+| **5. Actors** | Q15 Leading authors (RFI) · Q16 Broker authors · Q17 Collaboration gaps · Q18 Countries and institutions · Q19 Journals · Q20 Funders |
+| **6. Interdisciplinarity** | Q21 How interdisciplinary each community is (Rao-Stirling with S3 distances) · Q22 Are interdisciplinary papers cited more? · Q23 Is the field becoming more interdisciplinary? |
+
+```python
+res.questions()              # the ranked list, and which ones your data supports
+res.answer("Q8")             # findings + tables for one question
+res.report("report.html")    # every answer in one HTML report with charts
+```
+
+From the command line:
+
+```bash
+s3bib report scopus.csv -o report.html
+```
+
+In Claude, use the **`s3_guided`** prompt, or ask: *"Walk me through the S3 questions for
+my Scopus file."* See `examples/sample_report.html` for a report on synthetic data.
+
 ## Use it from Claude (no install, no API key)
 
 You need [uv](https://docs.astral.sh/uv/getting-started/installation/).

@@ -56,3 +56,21 @@ def test_run_finds_three_communities(df, monkeypatch, tmp_path):
 def test_requires_title_and_abstract():
     with pytest.raises(ValueError):
         s3bib.load_papers(pd.DataFrame({"Title": ["a", "b", "c"]}))
+
+
+def test_every_question_answers(df, monkeypatch, tmp_path):
+    monkeypatch.setattr(pipeline, "embed_texts", _fake_embed)
+    df = df.assign(Authors=["A1; A2"] * 15 + ["A2; A3"] * 16,
+                   Affiliations=["Aalborg University, Aalborg, Denmark"] * 31,
+                   **{"Source title": ["J1", "J2"] * 15 + ["J1"], "Author Keywords": ["k1; k2"] * 31})
+    res = s3bib.run_s3(df, progress=lambda s, p: None)
+    qt = res.questions()
+    assert list(qt["id"]) == [q.qid for q in s3bib.QUESTIONS]
+    for qid in qt.loc[qt["available"], "id"]:
+        a = res.answer(qid)
+        assert a.findings, qid
+        a.to_dict()
+    assert res.answer("Q20").findings[0].startswith("Not available")  # no funding column
+    out = res.report(tmp_path / "r.html")
+    html = out.read_text()
+    assert "Q1" in html and "Q23" in html and "Could not compute" not in html

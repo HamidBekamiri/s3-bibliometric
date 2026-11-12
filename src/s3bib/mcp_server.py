@@ -41,11 +41,12 @@ mcp = _Server(
     "s3-bibliometric",
     instructions=(
         "Tools for the S3 (Semantic Similarity Score) bibliometric method. "
-        "Typical flow: run_s3_analysis on a Scopus CSV -> inspect the threshold scan "
-        "and community list -> get_community for each main community to read its "
-        "central papers -> propose a short label per community and store them with "
-        "save_community_labels -> export_results. Base every interpretation on the "
-        "papers returned by the tools; cite paper titles and years."
+        "Typical flow: run_s3_analysis on a Scopus CSV -> get_community for each main "
+        "community and save_community_labels with short labels -> list_questions shows "
+        "the ranked research questions (Q1-Q23, in 6 stages) this dataset can answer -> "
+        "answer_question for the ones the user cares about, in rank order -> "
+        "build_report for one HTML report of all answers. Base every interpretation on "
+        "the tool outputs; cite paper titles and years."
     ),
 )
 
@@ -236,6 +237,45 @@ def export_results(run_id: str, output_dir: Optional[str] = None) -> Dict[str, s
     scan, citation matrix) to output_dir (default: the run folder)."""
     res = _get(run_id)
     return res.export(output_dir or (_run_dir(run_id) / "export"))
+
+
+@mcp.tool()
+def list_questions(run_id: str) -> List[Dict[str, Any]]:
+    """The ranked research questions of the S3 method (Q1-Q23) in 6 stages: trust the map,
+    map the field, knowledge flows, evolution, actors, interdisciplinarity. Shows priority
+    and whether this dataset has the columns each question needs."""
+    t = _get(run_id).questions()
+    return json.loads(t.to_json(orient="records"))
+
+
+@mcp.tool()
+def answer_question(run_id: str, question_id: str, max_rows: int = 20) -> Dict[str, Any]:
+    """Answer one ranked question, e.g. "Q8" (foundational papers) or "Q21"
+    (interdisciplinarity). Returns findings (plain sentences) and result tables."""
+    return _get(run_id).answer(question_id).to_dict(max_rows=max_rows)
+
+
+@mcp.tool()
+def build_report(run_id: str, output_path: Optional[str] = None,
+                 title: Optional[str] = None) -> Dict[str, str]:
+    """Answer every available question and write one self-contained HTML report
+    (findings, charts and tables per question). Default path: the run folder."""
+    res = _get(run_id)
+    p = res.report(output_path or (_run_dir(run_id) / "s3_report.html"), title)
+    return {"report": str(p)}
+
+
+@mcp.prompt()
+def s3_guided(run_id: str) -> str:
+    """Walk through the S3 research questions one stage at a time."""
+    return (
+        f"Guide me through the S3 analysis of run '{run_id}'. Call list_questions, then go "
+        "stage by stage (1 Trust the map → 6 Interdisciplinarity). For each available "
+        "question, call answer_question and explain the result in 2-4 sentences in plain "
+        "language, quoting the key numbers and paper titles. Label communities first "
+        "(get_community + save_community_labels) so later answers use the labels. After "
+        "each stage, ask whether to continue. At the end, call build_report."
+    )
 
 
 @mcp.prompt()

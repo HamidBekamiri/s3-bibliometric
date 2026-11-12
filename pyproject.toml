@@ -1,6 +1,6 @@
 [project]
 name = "s3-bibliometric"
-version = "0.1.0"
+version = "0.2.0"
 description = "S3 (Semantic Similarity Score) bibliometric method: Python library + MCP server for LLM assistants"
 readme = "README.md"
 license = "MIT"
@@ -36,6 +36,7 @@ Issues = "https://github.com/HamidBekamiri/s3-bibliometric/issues"
 [project.scripts]
 s3-bibliometric = "s3bib.mcp_server:main"
 s3bib-mcp = "s3bib.mcp_server:main"
+s3bib = "s3bib.cli:main"
 
 [build-system]
 requires = ["hatchling>=1.27"]
