@@ -14,7 +14,7 @@ from .questions import QUESTIONS, PLANNED, STAGES, answer, available
 
 # One colour per community (community 0 = largest); grey for communities outside the top 10.
 PALETTE = ["#0f6b74", "#c2672c", "#5b5fa8", "#3f8f4e", "#b8456b", "#8a7a2c", "#4f7fb3", "#7a5c99",
-           "#2f9c95", "#d0893a"]
+           "#2f9c95", "#d0893a", "#a33f3f", "#3d6e91", "#7e8c2a", "#9a4f8b", "#4a8a6f"]
 GREY = "#9aa7ad"
 
 
@@ -260,12 +260,82 @@ function s3Net(id){
 </script>
 """
 
+_KT_N = [0]
+
+
+def _ktree(spec: Dict[str, Any]) -> str:
+    _KT_N[0] += 1
+    kid = f"s3kt{_KT_N[0]}"
+    data = json.dumps({k: spec[k] for k in ("windows", "communities", "names", "nodes", "links")} |
+                      {"palette": PALETTE, "grey": GREY}, separators=(",", ":")).replace("</", "<\\/")
+    cit = spec.get("has_citations", True)
+    mode = "both" if cit else "sim"
+    btn = lambda m, t: (f'<button type="button" data-mode="{m}"{" disabled" if (m != "sim" and not cit) else ""}'
+                        f'{" class=on" if m == mode else ""}>{t}</button>')
+    legend = "".join(f'<button type="button" data-c="{c}"><i style="background:{_col(c)}"></i>'
+                     f'{_e(spec["names"][c] if c in spec["names"] else spec["names"].get(str(c), c))}</button>'
+                     for c in spec["communities"])
+    return (f'<div class="kt-ctl" id="{kid}-ctl">Links: {btn("cit", "Citations")}{btn("sim", "Similarity")}'
+            f'{btn("both", "Both")} <label>Minimum links <input type="number" min="1" value="2" '
+            f'id="{kid}-min"></label></div>'
+            f'<div class="tw kt"><svg id="{kid}" class="ktree" role="img" aria-label="{_e(spec.get("title"))}"></svg></div>'
+            f'<div class="legend net-legend" id="{kid}-legend">{legend}</div>'
+            f'<script type="application/json" id="{kid}-data">{data}</script>'
+            f'<script>s3KTree("{kid}","{mode}")</script>')
+
+
+KT_JS = r"""
+<script>
+function s3KTree(id, mode){
+  const d=JSON.parse(document.getElementById(id+'-data').textContent), svg=document.getElementById(id);
+  const NS='http://www.w3.org/2000/svg', col=c=>(c>=0&&c<d.palette.length)?d.palette[c]:d.grey;
+  const name=c=>d.names[c]??d.names[String(c)]??('C'+c);
+  const colW=210, rowH=46, nw=30, left=20, top=40;
+  const rows={}; d.communities.forEach((c,k)=>rows[c]=k);
+  const maxN=Math.max(...d.nodes.map(n=>n[2]));
+  const nh=n=>Math.max(3,Math.min(rowH*0.82,n*(rowH*0.82)/maxN));
+  const X=w=>left+w*colW, Y=c=>top+rows[c]*rowH+rowH/2;
+  let hl=null, minw=2;
+  const W=left+d.windows.length*colW+40, H=top+d.communities.length*rowH+10;
+  svg.setAttribute('viewBox',`0 0 ${W} ${H}`); svg.style.width=W+'px'; svg.style.height=H+'px';
+  const el=(t,a,p)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);(p||svg).appendChild(e);return e;};
+  function draw(){
+    svg.textContent='';
+    d.windows.forEach((w,k)=>{const t=el('text',{x:X(k)+nw/2,y:18,'text-anchor':'middle',class:'lab'});t.textContent=w;});
+    const wt=l=>mode==='cit'?l[4]:mode==='sim'?l[5]:l[4]+l[5];
+    const L=d.links.filter(l=>wt(l)>=minw); const mx=Math.max(1,...L.map(wt));
+    const g=el('g',{});
+    for(const l of L){const [a,wa,b,wb]=l, v=wt(l), on=hl===null||a===hl||b===hl;
+      const x0=X(wa)+nw, y0=Y(a), x1=X(wb), y1=Y(b), xm=(x0+x1)/2;
+      const p=el('path',{d:`M${x0},${y0} C${xm},${y0} ${xm},${y1} ${x1},${y1}`,fill:'none',
+        stroke:hl!==null&&on?col(a):'var(--kt-link)','stroke-width':(1+10*v/mx).toFixed(1),
+        'stroke-opacity':on?(hl===null?0.6:0.8):0.06},g);
+      const t=el('title',{},p); t.textContent=`${name(a)} ${d.windows[wa]} → ${name(b)} ${d.windows[wb]}: ${l[4]} citations, ${l[5]} similarity links`;}
+    for(const [c,w,n] of d.nodes){const on=hl===null||c===hl, h=nh(n), x=X(w), y=Y(c)-h/2;
+      const r=el('rect',{x,y,width:nw,height:h,fill:col(c),stroke:'var(--line)','fill-opacity':on?1:0.2});
+      const t=el('title',{},r); t.textContent=`${name(c)} · ${d.windows[w]}: ${n} papers`;
+      const last=w===d.windows.length-1;
+      const lab=el('text',{x:last?x-6:x+nw+6,y:Y(c)+4,'text-anchor':last?'end':'start',class:'lab','opacity':on?1:0.25});
+      lab.textContent=`${c} (N=${n})`;}
+  }
+  document.querySelectorAll('#'+id+'-ctl button').forEach(b=>b.addEventListener('click',()=>{
+    mode=b.dataset.mode;document.querySelectorAll('#'+id+'-ctl button').forEach(x=>x.classList.toggle('on',x===b));draw();}));
+  document.getElementById(id+'-min').addEventListener('input',e=>{minw=Math.max(1,+e.target.value||1);draw();});
+  document.querySelectorAll('#'+id+'-legend button').forEach(b=>b.addEventListener('click',()=>{
+    const c=+b.dataset.c;hl=hl===c?null:c;document.querySelectorAll('#'+id+'-legend button').forEach(x=>
+      x.classList.toggle('off',hl!==null&&+x.dataset.c!==hl));draw();}));
+  draw();
+  const box=svg.parentElement; box.scrollLeft=box.scrollWidth;
+}
+</script>
+"""
+
 
 def _chart(spec: Optional[Dict[str, Any]]) -> str:
     if not spec:
         return ""
     fn = {"bar": _bar, "line": _line, "heatmap": _heat, "stack": _stack, "sankey": _sankey,
-          "network": _network}.get(spec["type"])
+          "network": _network, "ktree": _ktree}.get(spec["type"])
     body = fn(spec) if fn else ""
     return f'<figure><figcaption>{_e(spec.get("title"))}</figcaption>{body}</figure>' if body else ""
 
@@ -323,7 +393,15 @@ footer{margin-top:40px;font-size:.85rem;color:var(--mut)}
 .net-help button,.net-legend button{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:5px;padding:2px 8px;cursor:pointer}
 .net-legend{margin-top:8px}.net-legend button{display:inline-flex;align-items:center;gap:5px;font-size:.8rem}
 .net-legend button.off{opacity:.35}
-.net-help button:focus-visible,.net-legend button:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+.kt{border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.ktree .lab{font-size:12px;fill:var(--fg)}
+:root{--kt-link:#98a4aa}
+.kt-ctl{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:.85rem;color:var(--mut);margin-bottom:6px}
+.kt-ctl button{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:5px;padding:2px 10px;cursor:pointer}
+.kt-ctl button.on{background:var(--acc);border-color:var(--acc);color:var(--card)}
+.kt-ctl button:disabled{opacity:.4;cursor:not-allowed}
+.kt-ctl input{width:4em;font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:5px;padding:1px 4px;margin-left:4px}
+.kt-ctl button:focus-visible,.net-help button:focus-visible,.net-legend button:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
 """
 
 
@@ -363,7 +441,7 @@ def build_report(res, path: Union[str, Path], title: Optional[str] = None,
     planned = "".join(f"<li>{_e(p)} <span class='mut'>({_e(s)})</span></li>" for p, s in PLANNED)
     doc = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>{_e(title)}</title><style>{CSS}</style></head>
-<body>{NET_JS}<div class="wrap">
+<body>{NET_JS}{KT_JS}<div class="wrap">
 <h1>{_e(title)}</h1>
 <p class="mut">{n} papers · {span} · best S3 threshold {thr} ·
 {int(res.papers['community'].notna().sum())} clustered papers in {len(res.communities())} communities · generated {date.today()} with s3-bibliometric</p>

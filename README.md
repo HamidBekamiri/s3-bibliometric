@@ -74,8 +74,15 @@ match Table 1.
 **Visuals.** The report includes the paper's figures (S3 network map as in Panel 1, SII
 curve as in Fig. 3, elbow plot as in Fig. 4, citation-flow heatmap as in Table 2), an
 interactive paper-level network map (zoom, pan, hover for the paper, click a community to
-highlight it), a citation-flow diagram, a stacked growth chart, and author × community and
-country × community maps. Community colours are the same in every chart.
+highlight it), a **knowledge tree** (communities per 5-year window, linked by citations and
+S3 similarity from earlier to later periods; switch between citation, similarity or both
+links, filter weak links, click a community to follow its lineage), a citation-flow
+diagram, a stacked growth chart, and author × community and country × community maps.
+Community colours are the same in every chart.
+
+```python
+kt = res.knowledge_tree(window_years=5)   # {"windows", "nodes", "links"} as DataFrames
+```
 
 ## The guided pipeline: 23 research questions
 
@@ -104,7 +111,7 @@ s3bib report scopus.csv -o report.html
 ```
 
 In Claude, use the **`s3_guided`** prompt, or ask: *"Walk me through the S3 questions for
-my Scopus file."* See `examples/sample_report.html` for a report on synthetic data.
+my Scopus file."*
 
 ## Use it from Claude (no install, no API key)
 
@@ -186,7 +193,12 @@ Year, Cited by, Authors, Author Keywords, Source title, DOI, and **References + 
   N×N matrix (~100 MB at N = 5,000).
 - A paper counts as citing another if the first 60 characters of the other paper's
   normalised title appear in its References. This step is O(N²).
-- `examples/make_sample.py` creates a small synthetic dataset for testing.
+
+## Tests
+
+The tests run on real data: 109 [OpenAlex](https://openalex.org) records (CC0) on absorptive
+capacity and work group diversity, with their real all-mpnet-base-v2 embeddings, in
+`tests/data/`. `python tests/data/build_openalex_sample.py` rebuilds them.
 
 ## Citation
 

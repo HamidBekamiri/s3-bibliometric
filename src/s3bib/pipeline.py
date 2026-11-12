@@ -463,6 +463,12 @@ class S3Result:
         set_seed(self.config.seed)
         return answer(self, qid)
 
+    def knowledge_tree(self, window_years: int = 5, n_communities: int = 15) -> Dict[str, Any]:
+        """Communities per time window and the citation / similarity links between them
+        (earlier -> later). Returns {"windows", "nodes", "links"} with DataFrames."""
+        from .ktree import knowledge_tree
+        return knowledge_tree(self, window_years, n_communities)
+
     def report(self, path: Union[str, Path], title: Optional[str] = None) -> Path:
         """Answer every available question and write one self-contained HTML report."""
         from .report import build_report

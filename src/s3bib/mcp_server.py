@@ -254,6 +254,21 @@ def get_citation_structure(run_id: str) -> Dict[str, Any]:
 
 
 @mcp.tool()
+def get_knowledge_tree(run_id: str, window_years: int = 5, n_communities: int = 15,
+                       min_links: int = 2) -> Dict[str, Any]:
+    """Knowledge tree: papers per community in each time window, and links from earlier to
+    later windows weighted by citations and by S3 similarity links. Use it to describe how
+    communities emerged, which earlier work each one builds on, and where knowledge flowed."""
+    kt = _get(run_id).knowledge_tree(window_years, n_communities)
+    links = kt["links"]
+    if not links.empty:
+        links = links[(links["citations"] + links["similarity_links"]) >= min_links]
+    return {"windows": kt["windows"], "citation_source": kt.get("citation_source"),
+            "nodes": json.loads(kt["nodes"].to_json(orient="records")),
+            "links": json.loads(links.sort_values(["from_window", "to_window"]).to_json(orient="records"))}
+
+
+@mcp.tool()
 def search_papers(run_id: str, query: str, top_k: int = 10) -> List[Dict[str, Any]]:
     """Semantic search over the run's papers (same embedding model as S3)."""
     res = _get(run_id)

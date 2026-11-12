@@ -528,7 +528,7 @@ def q_foundational(res) -> Answer:
                              "local citations": int(r["local_citations"])})
     t = pd.DataFrame(rows)
     a.findings.append("Global = most cited overall (Scopus 'Cited by'); local = most cited by other "
-                      "papers in this corpus. Local foundations show what the field itself "
+                      "papers in this corpus. Local foundations show what the field "
                       "itself builds on.")
     if not has_local:
         a.findings.append("Local citations need References and EID in the export; only global "
@@ -693,6 +693,10 @@ def q_growth(res) -> Answer:
     a.chart = {"type": "stack", "title": "Papers per year by community (stacked)", "x": years,
                "series": {_name(res, c): pivot[c].tolist() for c in comms},
                "color_ids": [int(c) for c in comms], "x_label": "year"}
+    from .ktree import ktree_spec
+    kt = ktree_spec(res)
+    if kt:
+        a.charts.append(kt)
     return a
 
 
