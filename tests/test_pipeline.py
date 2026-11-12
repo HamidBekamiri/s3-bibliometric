@@ -103,3 +103,22 @@ def test_concept_trends_ignore_search_terms(df, monkeypatch):
     f = " ".join(res.answer("Q14").findings)
     assert "green innovation" in f.split("Fading")[0] and "networks" in f.split("Fading")[1]
     assert "innovation (" not in f.replace("green innovation (", "")
+
+
+def test_fixed_threshold_and_methods(df, monkeypatch):
+    monkeypatch.setattr(pipeline, "embed_texts", _fake_embed)
+    fixed = s3bib.run_s3(df, s3bib.S3Config(threshold=0.9), progress=lambda s, p: None)
+    assert fixed.best["threshold"] == 0.9 and fixed.best["fixed"]
+    assert "fixed" in fixed.answer("Q1").findings[0]
+    lv = s3bib.run_s3(df, s3bib.S3Config(community_method="louvain"), progress=lambda s, p: None)
+    assert len(lv.communities()) == len(fixed.communities()) == 3
+
+
+def test_citation_metrics_count_whole_corpus(df, monkeypatch):
+    monkeypatch.setattr(pipeline, "embed_texts", _fake_embed)
+    res = s3bib.run_s3(df, progress=lambda s, p: None)
+    m = res.citation_metrics()
+    assert {"inward_citations", "outward_citations", "global_citations"} <= set(m.columns)
+    assert m["local_citations"].equals(m["within_citations"] + m["inward_citations"])
+    assert abs(m["mi"].sum() - m["local_citations"].sum() / res.mi_denominator() * 100) < 1e-9
+    assert res.top_terms(0, 3)  # c-TF-IDF terms

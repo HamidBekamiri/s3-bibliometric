@@ -18,6 +18,9 @@ def main(argv=None) -> None:
     r.add_argument("--start-year", type=int)
     r.add_argument("--end-year", type=int)
     r.add_argument("--title")
+    r.add_argument("--threshold", type=float, help="Fix the S3 threshold (e.g. 0.78) instead of choosing it by SII")
+    r.add_argument("--method", choices=["leiden", "louvain"], default="leiden",
+                   help="leiden = published method (default); louvain = S3 web app")
     r.add_argument("--save", help="Also save the run to this folder (reload with S3Result.load)")
     sub.add_parser("questions", help="List the ranked research questions")
     a = p.parse_args(argv)
@@ -29,7 +32,8 @@ def main(argv=None) -> None:
         return
 
     from .pipeline import S3Config, run_s3
-    cfg = S3Config(start_year=a.start_year, end_year=a.end_year)
+    cfg = S3Config(start_year=a.start_year, end_year=a.end_year, threshold=a.threshold,
+                   community_method=a.method)
     res = run_s3(a.csv, cfg, progress=lambda s, x: print(f"\r{x:4.0%}  {s:<50}", end="", file=sys.stderr))
     print(file=sys.stderr)
     if a.save:

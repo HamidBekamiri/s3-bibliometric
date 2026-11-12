@@ -10,16 +10,33 @@ label the communities and write up the intellectual structure.
 
 ## How S3 works
 
-1. Embed each paper's `Title. Abstract` with `sentence-transformers/all-mpnet-base-v2`
-2. **S3 matrix** = cosine similarity between all papers, temporally masked (year_i ≤ year_j)
-3. Scan thresholds 0.75–0.85: graph of S3 ≥ t → Louvain communities → silhouette
-4. Keep the threshold with the highest **SII = silhouette × clustered papers**
-5. Report communities, eigenvector centrality, outliers (papers with no S3 link), author
-   keywords, TF-IDF terms and, when `References` + `EID` are exported, in-corpus citation
-   flows with **QI** (within-community citations / size) and **MI** (share of field
-   citations)
+The library follows the published method: Bekamiri, Østergaard & Timmermans (2027),
+*Semantic similarity score: A new method for mapping intellectual structures in business
+research*, Journal of Business Research 219, 116582.
 
-Louvain uses a fixed seed (default 42), so results are reproducible.
+1. Embed each paper's `Title. Abstract` with `sentence-transformers/all-mpnet-base-v2`
+2. **S3 matrix** = cosine similarity between all papers, time-masked so links run from
+   earlier to later papers (year_i ≤ year_j)
+3. Scan thresholds 0.75–0.85: papers with at least one link S3 ≥ t are retained;
+   **Leiden with directed modularity** finds the communities
+4. Keep the threshold with the highest **SII = mean silhouette of retained papers ×
+   number retained**
+5. Describe communities with eigenvector and degree centrality and **c-TF-IDF** terms
+6. With `References` + `EID`: in-corpus citations, **QI** (within-community citations per
+   paper) and **MI** (the community's within + inward citations as a share of the field's
+   citation links)
+
+Leiden uses a fixed seed (default 42), so results are reproducible.
+
+```python
+s3bib.S3Config(threshold=0.78)            # reproduce a published threshold
+s3bib.S3Config(community_method="louvain") # reproduce the S3 web app instead
+s3bib.S3Config(mi_denominator="all")       # MI over all in-corpus links
+```
+
+**Reproducing the paper.** On the paper's ‘Innovation and Diversity’ corpus, a fixed
+threshold of 0.78 retains exactly the paper's 1,826 papers, and the ten largest Leiden
+communities and their QI, local and global citations closely match Table 1.
 
 ## The guided pipeline: 23 research questions
 

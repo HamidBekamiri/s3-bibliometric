@@ -1,23 +1,21 @@
 """
-Core S3 (Semantic Similarity Score) bibliometric pipeline.
-
-Faithful, modular re-implementation of the core of the S3 web app backend
-(backend/core/upload_pipeline.py, v4.1):
+Core S3 (Semantic Similarity Score) bibliometric pipeline, following the published
+method (Bekamiri, Østergaard & Timmermans, Journal of Business Research 219, 116582):
 
   1. Load a Scopus export (Title + Abstract required).
   2. Embed "Title. Abstract" with sentence-transformers/all-mpnet-base-v2.
   3. S3 matrix = cosine similarity between all paper embeddings.
-  4. Temporal mask: keep S3[i, j] only when year_i <= year_j.
-  5. Scan thresholds (0.75 .. 0.85): build graph of edges >= t, run Louvain,
-     silhouette on non-singleton papers, SII = silhouette * n_clustered.
-  6. Keep the partition with the highest SII.
-  7. Eigenvector centrality, top papers, outliers, keywords, TF-IDF terms,
-     and (if References + EID exist) in-corpus citation flows with QI / MI.
+  4. Time mask: keep S3[i, j] only when year_i <= year_j (a directed graph from
+     earlier to later papers).
+  5. Scan thresholds 0.75 .. 0.85. At each threshold t the retained papers are those
+     with at least one link S3 >= t; communities come from Leiden with directed
+     modularity; SII = mean silhouette of the retained papers × number retained.
+  6. Keep the threshold with the highest SII (or a fixed threshold, to reproduce a
+     published run).
+  7. Centrality, outliers, c-TF-IDF terms, keywords and, if References + EID exist,
+     in-corpus citations with QI and MI.
 
-Differences from the web app, on purpose:
-  * Louvain gets a fixed random seed (config.seed) so runs are reproducible.
-  * Optional year filter (start_year / end_year) before the analysis.
-  * Results are a Python object you can save/load, not a giant JSON blob.
+community_method="louvain" reproduces the S3 web app (undirected Louvain) instead.
 """
 from __future__ import annotations
 
@@ -74,6 +72,9 @@ class S3Config:
     end_year: Optional[int] = None
     top_n_communities: int = 10      # communities used for citation matrix / QI / MI
     cache_dir: Optional[str] = None  # cache embeddings here (keyed by content hash)
+    community_method: str = "leiden"  # "leiden" (directed, as in the paper) or "louvain" (web app)
+    threshold: Optional[float] = None  # fix the threshold instead of choosing it by SII
+    mi_denominator: str = "retained"   # MI denominator: links made by retained papers, or "all" links
 
 
 # --------------------------------------------------------------------------
@@ -225,22 +226,66 @@ def _silhouette(s3_full: np.ndarray, labels: np.ndarray) -> tuple[float, int]:
         return 0.0, n_kept
 
 
+def _leiden_directed(s3_directed: np.ndarray, threshold: float, seed: int):
+    """Leiden with directed modularity on the time-masked graph (edges i -> j with
+    S3 >= threshold). Returns ({node: community} for retained papers, n_edges)."""
+    import igraph as ig
+    import leidenalg as la
+    A = (s3_directed >= threshold) & (s3_directed > 0)
+    np.fill_diagonal(A, False)
+    src, dst = np.where(A)
+    if len(src) == 0:
+        return {}, 0
+    keep = np.unique(np.concatenate([src, dst]))
+    pos = {int(v): k for k, v in enumerate(keep)}
+    g = ig.Graph(n=len(keep), edges=[(pos[int(a)], pos[int(b)]) for a, b in zip(src, dst)], directed=True)
+    g.es["weight"] = s3_directed[src, dst].astype(float).tolist()
+    part = la.find_partition(g, la.ModularityVertexPartition, weights="weight", seed=seed)
+    return {int(keep[k]): int(c) for k, c in enumerate(part.membership)}, len(src)
+
+
+def _partition_at(s3_directed: np.ndarray, s3_full: np.ndarray, t: float, seed: int,
+                  method: str):
+    """One threshold: (scan row, {node: community} for every node) or (None, None)."""
+    from sklearn.metrics import silhouette_score
+    n = s3_full.shape[0]
+    if method == "louvain":
+        G = build_graph(s3_directed, t)
+        if G.number_of_edges() == 0:
+            return None, None
+        part = _louvain(G, seed)
+        labels = np.array([part[i] for i in range(n)])
+        sil, n_kept = _silhouette(s3_full, labels)
+        n_edges = G.number_of_edges()
+    else:
+        retained, n_edges = _leiden_directed(s3_directed, t, seed)
+        if not retained:
+            return None, None
+        nodes = np.array(sorted(retained))
+        labels_r = np.array([retained[i] for i in nodes])
+        n_kept = len(nodes)
+        sil = 0.0
+        if len(set(labels_r)) > 1:
+            dist = np.maximum(1.0 - s3_full[np.ix_(nodes, nodes)], 0.0)
+            np.fill_diagonal(dist, 0.0)
+            sil = float(silhouette_score(dist, labels_r, metric="precomputed"))
+        # papers without links become their own (singleton) community
+        part = {i: retained.get(i, -1 - i) for i in range(n)}
+        labels = np.array([part[i] for i in range(n)])
+    n_comm = int(sum(1 for c in Counter(labels).values() if c > 1))
+    row = {"threshold": float(t), "silhouette": sil, "n_papers": int(n_kept),
+           "sii": sil * n_kept, "n_communities": n_comm, "n_edges": int(n_edges)}
+    return row, part
+
+
 def threshold_scan(s3_directed: np.ndarray, s3_full: np.ndarray,
                    thresholds: Sequence[float], seed: int,
-                   progress: Optional[ProgressCallback] = None):
+                   progress: Optional[ProgressCallback] = None, method: str = "leiden"):
     """Return (scan_rows, best_row, best_partition)."""
-    n = s3_full.shape[0]
     rows, best, best_part = [], None, None
     for k, t in enumerate(thresholds):
-        G = build_graph(s3_directed, float(t))
-        if G.number_of_edges() > 0:
-            part = _louvain(G, seed)
-            labels = np.array([part[i] for i in range(n)])
-            sil, n_kept = _silhouette(s3_full, labels)
-            n_comm = int(sum(1 for c in Counter(labels).values() if c > 1))
-            row = {"threshold": float(t), "silhouette": sil, "n_papers": n_kept,
-                   "sii": sil * n_kept, "n_communities": n_comm,
-                   "n_edges": G.number_of_edges()}
+        row, part = _partition_at(s3_directed, s3_full, float(t), seed, method)
+        if row is not None:
             rows.append(row)
             if best is None or row["sii"] > best["sii"]:
                 best, best_part = row, part
@@ -356,17 +401,27 @@ class S3Result:
         return Counter(kws).most_common(n)
 
     def top_terms(self, community: int, n: int = 15) -> List[tuple[str, float]]:
-        """Top TF-IDF terms (fitted on the full corpus) summed over the community."""
-        from sklearn.feature_extraction.text import TfidfVectorizer
-        if not hasattr(self, "_tfidf"):
-            vec = TfidfVectorizer(max_features=2000, stop_words="english")
-            X = vec.fit_transform(self.papers["text"].tolist())
-            self._tfidf = (X, vec.get_feature_names_out())
-        X, terms = self._tfidf
-        idx = np.where(self.papers["community"].to_numpy() == community)[0]
-        if idx.size == 0:
+        """Most distinctive terms of a community by c-TF-IDF (paper Eq. 6): each community
+        is one document; W[x, c] = tf[x, c] × log(1 + A / f[x]), where f[x] is the term's
+        frequency across all communities and A the average word count per community."""
+        if getattr(self, "_ctfidf", None) is None:
+            from sklearn.feature_extraction.text import CountVectorizer
+            P = self.papers.dropna(subset=["community"])
+            ids = sorted(int(c) for c in P["community"].unique())
+            docs = [" ".join(P.loc[P["community"] == c, "text"]) for c in ids]
+            if not docs:
+                self._ctfidf = ({}, None, [])
+            else:
+                vec = CountVectorizer(stop_words="english", token_pattern=r"(?u)\b[a-zA-Z][a-zA-Z-]+\b")
+                tf = vec.fit_transform(docs).toarray().astype(float)
+                f = tf.sum(axis=0)
+                A = tf.sum() / len(ids)
+                W = tf * np.log(1 + A / np.maximum(f, 1))
+                self._ctfidf = ({c: k for k, c in enumerate(ids)}, W, vec.get_feature_names_out())
+        pos, W, terms = self._ctfidf
+        if community not in pos:
             return []
-        w = np.asarray(X[idx].sum(axis=0)).ravel()
+        w = W[pos[community]]
         order = np.argsort(w)[::-1][:n]
         return [(str(terms[i]), round(float(w[i]), 3)) for i in order if w[i] > 0]
 
@@ -381,27 +436,45 @@ class S3Result:
                 C.loc[int(ci), int(cj)] += 1
         return C
 
+    def mi_denominator(self) -> int:
+        """Total field citations used for MI: in-corpus citation links made by retained
+        papers (default), or all in-corpus links (mi_denominator='all')."""
+        if not self.citation_pairs:
+            return 0
+        if self.config.mi_denominator == "all":
+            return len(self.citation_pairs)
+        out = self.papers["is_outlier"].to_numpy()
+        return int(sum(1 for i, _ in self.citation_pairs if not out[i]))
+
     def citation_metrics(self) -> pd.DataFrame:
-        """QI (within / size) and MI (local / total field citations * 100), as in the app."""
+        """Table 1 of the S3 paper for the top-N communities.
+
+        within  = citations from papers in c to other papers in c
+        outward = citations from papers in c to any other paper in the corpus
+        inward  = citations to papers in c from any other paper in the corpus
+        QI = within / size;  MI = (within + inward) / field citations × 100;
+        local = within + inward;  global = sum of Scopus 'Cited by'."""
         if not self.citation_pairs:
             return pd.DataFrame()
-        C = self.citation_matrix()
-        total_field = float(self.papers.dropna(subset=["community"])["cited_by"].sum())
-        sizes = self.papers["community"].value_counts()
+        comm = self.papers["community"].astype("float").to_numpy()
+        cp = np.asarray(self.citation_pairs)
+        ci, cj = comm[cp[:, 0]], comm[cp[:, 1]]
+        denom = self.mi_denominator()
         rows = []
-        for cid in C.index:
-            within = float(C.loc[cid, cid])
-            outward = float(C.loc[cid].sum()) - within
-            inward = float(C[cid].sum()) - within
-            size = int(sizes.get(cid, 0))
-            local = within + inward
+        for cid in self._top_ids():
+            in_c = self.papers["community"] == cid
+            size = int(in_c.sum())
+            within = int(((ci == cid) & (cj == cid)).sum())
+            outward = int(((ci == cid) & (cj != cid)).sum())
+            inward = int(((ci != cid) & (cj == cid)).sum())
             rows.append({
                 "community": int(cid), "size": size,
-                "within_citations": int(within), "outward_citations": int(outward),
-                "inward_citations": int(inward),
+                "within_citations": within, "outward_citations": outward,
+                "inward_citations": inward,
                 "qi": within / size if size else 0.0,
-                "mi": local / total_field * 100 if total_field else 0.0,
-                "local_citations": local,
+                "mi": (within + inward) / denom * 100 if denom else 0.0,
+                "local_citations": within + inward,
+                "global_citations": int(self.papers.loc[in_c.fillna(False), "cited_by"].sum()),
             })
         return pd.DataFrame(rows)
 
@@ -441,7 +514,10 @@ class S3Result:
     def load(cls, directory: Union[str, Path]) -> "S3Result":
         d = Path(directory).expanduser()
         meta = json.loads((d / "run.json").read_text())
-        cfg = S3Config(**{**meta["config"], "thresholds": tuple(meta["config"]["thresholds"])})
+        c = dict(meta["config"])
+        c.setdefault("community_method", "louvain")  # runs saved before 0.3.0 used Louvain
+        c["thresholds"] = tuple(c["thresholds"])
+        cfg = S3Config(**{k: v for k, v in c.items() if k in S3Config.__dataclass_fields__})
         return cls(papers=pd.read_pickle(d / "papers.pkl"),
                    embeddings=np.load(d / "embeddings.npy"),
                    scan=meta["scan"], best=meta["best"], config=cfg,
@@ -494,8 +570,17 @@ def run_s3(source: Union[str, Path, pd.DataFrame],
     years = df["year"].to_numpy(dtype=float)
     s3_dir = apply_temporal_mask(s3, years) if cfg.temporal_mask else s3
 
+    if cfg.community_method not in ("leiden", "louvain"):
+        raise ValueError("community_method must be 'leiden' or 'louvain'")
     scan, best, part = threshold_scan(s3_dir, s3, cfg.thresholds, cfg.seed,
-                                      progress=lambda s, p: say(s, 0.5 + 0.35 * p))
+                                      progress=lambda s, p: say(s, 0.5 + 0.35 * p),
+                                      method=cfg.community_method)
+    if cfg.threshold is not None:  # reproduce a fixed (e.g. published) threshold
+        best, part = _partition_at(s3_dir, s3, float(cfg.threshold), cfg.seed, cfg.community_method)
+        if best is not None:
+            best["fixed"] = True
+            if not any(abs(r["threshold"] - best["threshold"]) < 1e-9 for r in scan):
+                scan = sorted(scan + [dict(best)], key=lambda r: r["threshold"])
 
     df["community"] = pd.array([None] * n, dtype="Int64")
     df["eigen_centrality"] = 0.0
@@ -530,10 +615,9 @@ def run_s3(source: Union[str, Path, pd.DataFrame],
         say("Matching in-corpus citations", 0.9)
         pairs = citation_edges(df)
         if pairs:
-            same = Counter(j for i, j in pairs
-                           if pd.notna(df.at[i, "community"]) and pd.notna(df.at[j, "community"])
-                           and df.at[i, "community"] == df.at[j, "community"])
-            df["local_citations"] = [same.get(i, 0) for i in range(n)]
+            # local citations = citations a paper receives from other papers in the corpus
+            received = Counter(j for _, j in pairs)
+            df["local_citations"] = [received.get(i, 0) for i in range(n)]
 
     say("Done", 1.0)
     return S3Result(papers=df, embeddings=emb, scan=scan, best=best,

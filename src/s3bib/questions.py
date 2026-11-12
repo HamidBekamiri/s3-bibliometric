@@ -203,14 +203,18 @@ def q_threshold(res) -> Answer:
         a.findings.append("No threshold produced a usable community structure.")
         return a
     b = res.best
+    sii_best = scan.loc[scan["sii"].idxmax()]
+    head = (f"The threshold is fixed at S3 ≥ {b['threshold']:.2f} (SII = {b['sii']:.1f}); the highest SII in "
+            f"the scan is at {sii_best['threshold']:.2f} (SII = {sii_best['sii']:.1f})." if b.get("fixed") else
+            f"The best threshold is S3 ≥ {b['threshold']:.2f} (highest SII = {b['sii']:.1f}).")
     a.findings += [
-        f"The best threshold is S3 ≥ {b['threshold']:.2f} (highest SII = {b['sii']:.1f}).",
+        head,
         f"At this threshold {b['n_papers']} of {len(res.papers)} papers "
         f"({b['n_papers'] / len(res.papers):.0%}) fall into {b['n_communities']} communities, "
         f"with a silhouette of {b['silhouette']:.3f}.",
     ]
     lo, hi = scan["threshold"].min(), scan["threshold"].max()
-    if b["threshold"] in (lo, hi):
+    if not b.get("fixed") and b["threshold"] in (lo, hi):
         edge = "lowest" if b["threshold"] == lo else "highest"
         a.findings.append(f"Warning: the best threshold is the {edge} value scanned, so SII may peak "
                           f"outside the range. Re-run with a wider range, e.g. "
@@ -395,7 +399,7 @@ def q_topics(res) -> Answer:
     rows = []
     for c in _main_comms(res):
         rows.append({"community": c, "label": res.labels.get(c, ""),
-                     "top terms (TF-IDF)": ", ".join(t for t, _ in res.top_terms(c, 8)),
+                     "top terms (c-TF-IDF)": ", ".join(t for t, _ in res.top_terms(c, 8)),
                      "top author keywords": ", ".join(k for k, _ in res.top_keywords(c, 6))})
     t = pd.DataFrame(rows)
     a.findings.append("Each community is described by its most distinctive title/abstract terms "
@@ -450,7 +454,7 @@ def q_foundational(res) -> Answer:
                              "local citations": int(r["local_citations"])})
     t = pd.DataFrame(rows)
     a.findings.append("Global = most cited overall (Scopus 'Cited by'); local = most cited by other "
-                      "papers in the same community. Local foundations show what the community "
+                      "papers in this corpus. Local foundations show what the field itself "
                       "itself builds on.")
     if not has_local:
         a.findings.append("Local citations need References and EID in the export; only global "
@@ -459,7 +463,7 @@ def q_foundational(res) -> Answer:
     if cited < 0.2:
         a.findings.append(f"Only {cited:.0%} of papers have been cited so far, so citation-based "
                           "rankings here are still unstable.")
-    a.tables["Foundational papers (Table 3)"] = t
+    a.tables["Foundational papers (Appendix Table C1)"] = t
     return a
 
 
@@ -499,8 +503,12 @@ def q_flows(res) -> Answer:
         imp = m.sort_values("inward_citations", ascending=False).iloc[0]
         a.findings.append(f"The community most cited by others is {_name(res, imp.community)} "
                           f"({int(imp.inward_citations)} inward citations): a knowledge source for the field.")
-    a.tables["Community citation metrics (Table 2)"] = m.round(3)
-    a.tables["Citation matrix (rows cite columns)"] = C.set_axis(names, axis=0).set_axis(names, axis=1) \
+        basis = ("links made by papers retained at the threshold" if res.config.mi_denominator != "all"
+                 else "all in-corpus links")
+        a.findings.append(f"MI is each community's share of the field's {res.mi_denominator()} citations "
+                          f"({basis}).")
+    a.tables["Community citation metrics (Table 1)"] = m.round(3)
+    a.tables["Citation flows between communities (Table 2, rows cite columns)"] = C.set_axis(names, axis=0).set_axis(names, axis=1) \
         .reset_index().rename(columns={"index": "citing community"})
     a.chart = {"type": "heatmap", "title": "Citations between communities (rows cite columns)",
                "rows": names, "cols": names, "matrix": C.values.tolist()}
@@ -939,7 +947,7 @@ def q_integration_trend(res) -> Answer:
 QUESTIONS: List[Question] = [
     Question("Q1", 1, "Essential", "What similarity threshold structures this field best?",
              "Shows the S3 threshold choice is data-driven, not arbitrary.",
-             "Threshold scan 0.75-0.85, SII = silhouette × clustered papers", (), q_threshold),
+             "Threshold scan 0.75-0.85, SII = silhouette × retained papers", (), q_threshold),
     Question("Q2", 1, "Essential", "How clear is the community structure?",
              "Reviewers ask whether the communities are real.", "Silhouette, modularity, density", (), q_quality),
     Question("Q3", 1, "Essential", "Which papers do not belong to the field?",
@@ -951,19 +959,19 @@ QUESTIONS: List[Question] = [
              ("references",), q_validation),
     Question("Q5", 2, "Essential", "What are the main research communities?",
              "The core result: the intellectual structure of the field.",
-             "Louvain communities on the S3 graph", (), q_communities),
+             "Leiden (directed modularity) on the time-ordered S3 graph", (), q_communities),
     Question("Q6", 2, "Essential", "What is each community about?",
-             "Turns clusters into named topics.", "TF-IDF terms and author keywords per community", (), q_topics),
+             "Turns clusters into named topics.", "c-TF-IDF terms and author keywords per community", (), q_topics),
     Question("Q7", 2, "Essential", "Which papers are at the core of each community?",
              "Tells readers what to read first.", "Eigenvector, degree and betweenness centrality", (), q_central),
     Question("Q8", 2, "Essential", "Which papers is each community built on?",
-             "Table 3 of the S3 paper: local vs global foundations.",
+             "Appendix Table C1 of the S3 paper: local vs global foundations.",
              "Top local (in-community) and global (Scopus) citations", (), q_foundational),
     Question("Q9", 2, "Recommended", "How close are the communities to each other?",
              "Shows the map's layout: neighbouring vs distant topics.",
              "Mean S3 between communities", (), q_similarity),
     Question("Q10", 3, "Essential", "How do communities cite each other, and which are mature?",
-             "Table 2 of the S3 paper: knowledge flows, QI and MI.",
+             "Tables 1-2 of the S3 paper: knowledge flows, QI and MI.",
              "In-corpus citation matrix, QI, MI", ("citations",), q_flows),
     Question("Q11", 3, "Recommended", "Where are the knowledge gaps?",
              "Close topics that ignore each other are research opportunities.",

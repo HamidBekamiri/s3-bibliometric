@@ -91,13 +91,17 @@ def run_s3_analysis(
     end_year: Optional[int] = None,
     seed: int = 42,
     rerun: bool = False,
+    threshold: Optional[float] = None,
+    community_method: str = "leiden",
 ) -> Dict[str, Any]:
     """Run the S3 pipeline on a Scopus CSV/Excel export (needs Title and Abstract;
     Year, Cited by, Authors, Author Keywords, References and EID are used if present).
 
-    Embeds Title+Abstract (all-mpnet-base-v2), computes the S3 cosine matrix with
-    temporal masking, scans thresholds 0.75-0.85, and keeps the Louvain partition
-    with the highest SII (silhouette x clustered papers). Can take several minutes
+    Follows the published S3 method: embeds Title+Abstract (all-mpnet-base-v2), builds
+    the time-ordered S3 graph, scans thresholds 0.75-0.85 and keeps the Leiden (directed
+    modularity) partition with the highest SII (silhouette x retained papers).
+    Set threshold (e.g. 0.78) to reproduce a published run, or community_method="louvain"
+    to reproduce the S3 web app. Can take several minutes
     for thousands of papers the first time; embeddings are cached afterwards.
 
     Returns a run_id plus a summary: best threshold, communities, outlier count.
@@ -106,14 +110,15 @@ def run_s3_analysis(
     if not p.exists():
         raise ValueError(f"File not found: {p}")
     stem = re.sub(r"[^A-Za-z0-9_-]+", "_", p.stem)[:40]
-    key = f"{p.resolve()}|{p.stat().st_size}|{start_year}|{end_year}|{seed}"
+    key = f"{p.resolve()}|{p.stat().st_size}|{start_year}|{end_year}|{seed}|{threshold}|{community_method}"
     run_id = f"{stem}_{hashlib.sha1(key.encode()).hexdigest()[:8]}"
 
     if not rerun and (_run_dir(run_id) / "run.json").exists():
         res = _get(run_id)
     else:
         cfg = S3Config(start_year=start_year, end_year=end_year, seed=seed,
-                       cache_dir=str(HOME / "_cache"))
+                       cache_dir=str(HOME / "_cache"), threshold=threshold,
+                       community_method=community_method)
         res = run_s3(p, cfg)
         res.save(_run_dir(run_id))
         _RUNS[run_id] = res
