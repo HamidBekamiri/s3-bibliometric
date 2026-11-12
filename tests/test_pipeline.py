@@ -102,6 +102,7 @@ def test_every_question_answers(res, tmp_path):
     html = res.report(tmp_path / "r.html").read_text()
     assert "Q1" in html and "Q23" in html and "Could not compute" not in html
     assert 'class="ktree"' in html  # knowledge tree under Q13
+    assert "force-graph@1.51.0" in html and 's3FG("' in html  # network drawn as in the S3 web app
 
 
 def test_missing_columns_are_skipped(df):

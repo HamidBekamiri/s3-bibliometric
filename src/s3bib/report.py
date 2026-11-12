@@ -197,22 +197,100 @@ def _sankey(spec: Dict[str, Any]) -> str:
 _NET_N = [0]
 
 
+FORCE_GRAPH_CDN = "https://cdn.jsdelivr.net/npm/force-graph@1.51.0/dist/force-graph.min.js"
+
+
 def _network(spec: Dict[str, Any]) -> str:
+    """Paper network drawn with force-graph, the library behind the S3 web app's
+    react-force-graph-2d map (same settings: nodeRelSize 3, 15% links, 100 cooldown ticks,
+    node drag, hover card, click for details, year slider with Play, dark/light).
+    Falls back to a built-in canvas map when the library cannot be loaded (offline)."""
     _NET_N[0] += 1
     nid = f"s3net{_NET_N[0]}"
     data = json.dumps({"nodes": spec["nodes"], "edges": spec["edges"], "palette": PALETTE, "grey": GREY},
                       separators=(",", ":")).replace("</", "<\\/")
     legend = "".join(f'<button type="button" data-c="{g["id"]}"><i style="background:{_col(g["id"])}"></i>'
                      f'{_e(g["name"])} <span class="mut">({g["n"]})</span></button>' for g in spec["legend"])
-    return (f'<div class="net"><canvas id="{nid}" aria-label="{_e(spec.get("title"))}"></canvas>'
-            f'<div class="net-tip" id="{nid}-tip" hidden></div>'
-            f'<div class="net-help">Scroll or use the buttons to zoom, drag to move, hover a dot for the paper. '
-            f'<button type="button" data-z="1.4">+</button><button type="button" data-z="0.7">−</button>'
-            f'<button type="button" data-z="0">Reset</button></div></div>'
+    years = [n[5] for n in spec["nodes"] if n[5]]
+    lo, hi = (min(years), max(years)) if years else (0, 0)
+    fallback = (f'<div class="net"><canvas id="{nid}" aria-label="{_e(spec.get("title"))}"></canvas>'
+                f'<div class="net-tip" id="{nid}-tip" hidden></div>'
+                f'<div class="net-help">Scroll or use the buttons to zoom, drag to move, hover a dot for the paper. '
+                f'<button type="button" data-z="1.4">+</button><button type="button" data-z="0.7">−</button>'
+                f'<button type="button" data-z="0">Reset</button></div></div>')
+    return (f'<div class="fg dark" id="{nid}-fg">'
+            f'<div class="fg-bar"><button type="button" class="fg-play">Play</button>'
+            f'<span>{lo}</span><input type="range" min="{lo}" max="{hi}" value="{hi}" aria-label="Show papers up to year">'
+            f'<span>{hi}</span><b class="fg-year">{hi}</b><span class="fg-sep"></span>'
+            f'<button type="button" class="fg-theme">Light</button>'
+            f'<button type="button" class="fg-fit">Fit</button></div>'
+            f'<div class="fg-main"><div class="fg-canvas" aria-label="{_e(spec.get("title"))}"></div>'
+            f'<div class="fg-hover" hidden></div><aside class="fg-side" hidden></aside></div></div>'
+            f'<template id="{nid}-fallback">{fallback}</template>'
             f'<div class="legend net-legend" id="{nid}-legend">{legend}</div>'
+            f'<p class="more">Drawn with force-graph, as in the S3 web app. Hover a paper for its details, '
+            f'click it for the abstract, drag to move it, scroll to zoom, click a community below to highlight it.</p>'
             f'<script type="application/json" id="{nid}-data">{data}</script>'
-            f'<script>s3Net("{nid}")</script>')
+            f'<script>s3FG("{nid}")</script>')
 
+
+FG_JS = r"""
+<script>
+function s3FG(id){
+  const box=document.getElementById(id+'-fg'), d=JSON.parse(document.getElementById(id+'-data').textContent);
+  if(typeof ForceGraph==='undefined'){            // offline: built-in canvas map
+    box.replaceWith(document.getElementById(id+'-fallback').content.cloneNode(true)); return s3Net(id);}
+  const el=box.querySelector('.fg-canvas'), hov=box.querySelector('.fg-hover'), side=box.querySelector('.fg-side');
+  const range=box.querySelector('input'), yearB=box.querySelector('.fg-year'), play=box.querySelector('.fg-play');
+  const col=c=>(c>=0&&c<d.palette.length)?d.palette[c]:d.grey;
+  const nodes=d.nodes.map((n,i)=>({id:i,x:n[0]*600,y:n[1]*600,community:n[2],val:Math.max(1,(n[3]/2)**2),
+    title:n[4],year:n[5],citations:n[6],cname:n[7],author:n[8]||'',abstract:n[9]||''}));
+  const links=d.edges.map(([a,b])=>({source:a,target:b}));
+  const maxY=+range.max; let year=maxY, hl=null, dark=true, timer=null, moved=false;
+  const shown=n=>!n.year||n.year<=year;
+  const ends=l=>[typeof l.source==='object'?l.source:nodes[l.source],typeof l.target==='object'?l.target:nodes[l.target]];
+  const fade=(c,on)=>on?c:c+'22';
+  const g=new ForceGraph(el).graphData({nodes,links}).nodeRelSize(3).nodeVal('val')
+    .nodeColor(n=>fade(col(n.community),hl===null||n.community===hl))
+    .linkColor(()=>dark?'rgba(255,255,255,0.15)':'rgba(0,0,0,0.15)')
+    .nodeVisibility(shown).linkVisibility(l=>{const [a,b]=ends(l);return shown(a)&&shown(b);})
+    .nodeLabel(()=>'').backgroundColor('#000000').cooldownTicks(100).enableNodeDrag(true)
+    .onEngineStop(()=>{if(!moved)g.zoomToFit(400,30,shown);})
+    .onNodeHover(n=>{el.style.cursor=n?'pointer':null;
+      if(!n){hov.hidden=true;return;}
+      hov.replaceChildren();const t=document.createElement('strong');t.textContent=n.title;t.style.color=col(n.community);
+      const m=document.createElement('div');m.className='m';m.textContent=(n.author?n.author+' ':'')+'('+(n.year??'n.d.')+') · '+n.citations+' citations';
+      const c=document.createElement('div');c.className='c';c.textContent=n.cname;hov.append(t,m,c);
+      if(n.abstract){const a=document.createElement('div');a.className='a';a.textContent=n.abstract;hov.append(a);}
+      hov.hidden=false;})
+    .onNodeClick(n=>{side.replaceChildren();const h=document.createElement('h4');h.textContent=n.title;
+      const m=document.createElement('div');m.className='m';m.textContent=(n.author?n.author+' · ':'')+(n.year??'n.d.');
+      const p=document.createElement('span');p.className='pill';p.textContent=n.cname;p.style.background=col(n.community);
+      const ci=document.createElement('div');ci.innerHTML='<b>Citations:</b> ';ci.append(String(n.citations));
+      const ab=document.createElement('p');ab.textContent=n.abstract||'No abstract available.';
+      const x=document.createElement('button');x.type='button';x.textContent='Close';x.onclick=()=>{side.hidden=true;};
+      side.append(h,m,p,ci,ab,x);side.hidden=false;});
+  box.graph=g;                             // for scripting: document.querySelector('.fg').graph
+  g.d3Force('charge').distanceMax(120);   // keep the S3 community layout compact
+  el.addEventListener('wheel',()=>{moved=true;},{passive:true});
+  el.addEventListener('pointerdown',()=>{moved=true;});
+  const size=()=>{g.width(el.clientWidth).height(el.clientHeight);if(!moved)setTimeout(()=>g.zoomToFit(0,30,shown),50);};
+  new ResizeObserver(size).observe(el); size();
+  const setYear=y=>{year=y;range.value=y;yearB.textContent=y;g.nodeVisibility(shown);};
+  range.addEventListener('input',()=>{setYear(+range.value);stop();});
+  function stop(){clearInterval(timer);timer=null;play.textContent=year>=maxY?'Replay':'Play';play.classList.remove('on');}
+  play.addEventListener('click',()=>{if(timer)return stop();if(year>=maxY)setYear(+range.min);
+    play.textContent='Pause';play.classList.add('on');
+    timer=setInterval(()=>{if(year>=maxY)return stop();setYear(year+1);},800);});
+  box.querySelector('.fg-theme').addEventListener('click',e=>{dark=!dark;box.classList.toggle('dark',dark);
+    e.target.textContent=dark?'Light':'Dark';g.backgroundColor(dark?'#000000':'#ffffff').linkColor(g.linkColor());});
+  box.querySelector('.fg-fit').addEventListener('click',()=>g.zoomToFit(400,30,shown));
+  document.querySelectorAll('#'+id+'-legend button').forEach(b=>b.addEventListener('click',()=>{
+    const c=+b.dataset.c;hl=hl===c?null:c;document.querySelectorAll('#'+id+'-legend button').forEach(x=>
+    x.classList.toggle('off',hl!==null&&+x.dataset.c!==hl));g.nodeColor(g.nodeColor());}));
+}
+</script>
+"""
 
 NET_JS = r"""
 <script>
@@ -393,6 +471,32 @@ footer{margin-top:40px;font-size:.85rem;color:var(--mut)}
 .net-help button,.net-legend button{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:5px;padding:2px 8px;cursor:pointer}
 .net-legend{margin-top:8px}.net-legend button{display:inline-flex;align-items:center;gap:5px;font-size:.8rem}
 .net-legend button.off{opacity:.35}
+.fg{border:1px solid #ddd;border-radius:8px;overflow:hidden;background:#fff;color:#111}
+.fg.dark{border-color:#333;background:#000;color:#eee}
+.fg-bar{display:flex;align-items:center;gap:10px;padding:6px 12px;background:#f5f5f5;border-bottom:1px solid #ddd;font-size:.85rem;color:#555}
+.fg.dark .fg-bar{background:#222;border-color:#333;color:#aaa}
+.fg-bar input{flex:1;min-width:60px;cursor:pointer}
+.fg-bar button{font:inherit;font-weight:600;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;background:#ddd;color:#000}
+.fg.dark .fg-bar button{background:#444;color:#fff}
+.fg-bar .fg-play,.fg.dark .fg-bar .fg-play{background:#2ca02c;color:#fff;min-width:72px}
+.fg-bar .fg-play.on,.fg.dark .fg-bar .fg-play.on{background:#d62728}
+.fg-year{background:#ddd;color:#000;padding:2px 8px;border-radius:4px;min-width:3.2em;text-align:center}
+.fg.dark .fg-year{background:#333;color:#fff}
+.fg-sep{border-left:1px solid #ccc;height:22px}.fg.dark .fg-sep{border-color:#444}
+.fg-main{position:relative;display:flex;height:min(75vh,700px)}
+.fg-canvas{flex:1;min-width:0;position:relative}
+.fg-hover{position:absolute;top:10px;left:10px;max-width:350px;padding:8px 12px;font-size:.85rem;border-radius:4px;z-index:2;pointer-events:none;background:rgba(255,255,255,.92);color:#111;border:1px solid #ccc;box-shadow:0 2px 4px rgba(0,0,0,.2)}
+.fg.dark .fg-hover{background:rgba(20,20,20,.92);color:#eee;border-color:#444}
+.fg-hover .m{margin-top:4px;opacity:.75}.fg-hover .c{margin-top:2px;font-size:.75rem;opacity:.65}
+.fg-hover .a{margin-top:6px;font-size:.75rem;max-height:100px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical}
+.fg-side{width:320px;max-width:45%;padding:18px;overflow-y:auto;border-left:1px solid #ddd;background:#fff;color:#111;font-size:.85rem;line-height:1.5}
+.fg.dark .fg-side{border-color:#333;background:#111;color:#eee}
+.fg-side h4{margin:0 0 6px;font-size:1.05rem}.fg-side .m{opacity:.7;margin-bottom:10px}
+.fg-side .pill{display:inline-block;color:#fff;border-radius:999px;padding:2px 10px;margin-bottom:10px;font-size:.8rem}
+.fg-side button{width:100%;margin-top:14px;font:inherit;padding:6px;border-radius:4px;cursor:pointer;border:1px solid #ccc;background:#f0f0f0;color:#000}
+.fg.dark .fg-side button{border-color:#555;background:#333;color:#fff}
+.fg button:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+@media (max-width:640px){.fg-side{position:absolute;right:0;top:0;bottom:0;max-width:85%}}
 .kt{border:1px solid var(--line);border-radius:8px;background:var(--bg)}
 .ktree .lab{font-size:12px;fill:var(--fg)}
 :root{--kt-link:#98a4aa}
@@ -440,8 +544,9 @@ def build_report(res, path: Union[str, Path], title: Optional[str] = None,
     thr = f"{res.best['threshold']:.2f}" if res.best else "n/a"
     planned = "".join(f"<li>{_e(p)} <span class='mut'>({_e(s)})</span></li>" for p, s in PLANNED)
     doc = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>{_e(title)}</title><style>{CSS}</style></head>
-<body>{NET_JS}{KT_JS}<div class="wrap">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>{_e(title)}</title><style>{CSS}</style>
+<script src="{FORCE_GRAPH_CDN}"></script></head>
+<body>{NET_JS}{FG_JS}{KT_JS}<div class="wrap">
 <h1>{_e(title)}</h1>
 <p class="mut">{n} papers · {span} · best S3 threshold {thr} ·
 {int(res.papers['community'].notna().sum())} clustered papers in {len(res.communities())} communities · generated {date.today()} with s3-bibliometric</p>

@@ -245,7 +245,8 @@ def _network_spec(res, n_comms: int = 20, max_edges: int = 20000) -> Optional[Di
     nodes = [[round(float(pos[i][0]), 4), round(float(pos[i][1]), 4),
               int(of[i]) if of[i] < res.config.top_n_communities else -1,
               round(float(2 + 1.4 * np.log1p(cites[i]) ** 0.9), 2),
-              str(P.at[i, "title"])[:140], _int(P.at[i, "year"]), int(cites[i]), _name(res, of[i])]
+              str(P.at[i, "title"])[:140], _int(P.at[i, "year"]), int(cites[i]), _name(res, of[i]),
+              _first_author(P.at[i, "authors"]), _clip(P.at[i, "abstract"], 900)]
              for i in order]
     edges = [[idx[u], idx[v]] for u, v in G.edges() if u in idx and v in idx][:max_edges]
     legend = [{"id": int(c), "name": _name(res, c), "n": len(members[c])} for c in comms
@@ -257,6 +258,21 @@ def _network_spec(res, n_comms: int = 20, max_edges: int = 20000) -> Optional[Di
 
 def _int(x):
     return None if pd.isna(x) else int(x)
+
+
+def _clip(v, n: int) -> str:
+    v = "" if v is None or (isinstance(v, float) and np.isnan(v)) else str(v)
+    return v if len(v) <= n else v[:n].rsplit(" ", 1)[0] + " …"
+
+
+def _first_author(v) -> str:
+    """'Lokshin B.; Belderbos R.' -> 'Lokshin B. et al.'"""
+    names = _split(v) if isinstance(v, str) else []
+    if len(names) == 1 and "," in names[0] and names[0].count(",") > 1:  # older Scopus: 'A., B., C.'
+        names = [x.strip() for x in names[0].split(",") if x.strip()]
+    if not names:
+        return ""
+    return names[0] + (" et al." if len(names) > 1 else "")
 
 
 # ===========================================================================

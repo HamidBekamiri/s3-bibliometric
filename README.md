@@ -73,8 +73,10 @@ match Table 1.
 
 **Visuals.** The report includes the paper's figures (S3 network map as in Panel 1, SII
 curve as in Fig. 3, elbow plot as in Fig. 4, citation-flow heatmap as in Table 2), an
-interactive paper-level network map (zoom, pan, hover for the paper, click a community to
-highlight it), a **knowledge tree** (communities per 5-year window, linked by citations and
+interactive paper-level network map drawn with
+[force-graph](https://github.com/vasturiano/force-graph), the library behind the S3 web app's map
+(hover for the paper, click for its abstract, drag, zoom, play the network year by year,
+dark/light, click a community to highlight it; a built-in map is used offline), a **knowledge tree** (communities per 5-year window, linked by citations and
 S3 similarity from earlier to later periods; switch between citation, similarity or both
 links, filter weak links, click a community to follow its lineage), a citation-flow
 diagram, a stacked growth chart, and author × community and country × community maps.
