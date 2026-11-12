@@ -74,3 +74,18 @@ def test_every_question_answers(df, monkeypatch, tmp_path):
     out = res.report(tmp_path / "r.html")
     html = out.read_text()
     assert "Q1" in html and "Q23" in html and "Could not compute" not in html
+
+
+def test_split_refs_handles_both_scopus_formats():
+    from s3bib.questions import _split_refs
+    new = "Gielis J.; Shi P.; Caratelli D., Universal Equations, Growth Form, 3, (2022); Koza J.R., Genetic programming, Stat. Comput., 4, (1994)"
+    old = "Smith J., Doe A., A study, Journal, 3, (2001); Lee K., Another study, J2, (1999a)"
+    assert len(_split_refs(new)) == 2 and _split_refs(new)[0].startswith("Gielis J.; Shi P.")
+    assert _split_refs(old) == ["Smith J., Doe A., A study, Journal, 3, (2001)", "Lee K., Another study, J2, (1999a)"]
+
+
+def test_time_questions_skipped_for_single_year(df, monkeypatch):
+    monkeypatch.setattr(pipeline, "embed_texts", _fake_embed)
+    res = s3bib.run_s3(df.assign(Year=2027), progress=lambda s, p: None)
+    for qid in ("Q13", "Q23"):
+        assert "fewer than 3 publication years" in res.answer(qid).findings[0]

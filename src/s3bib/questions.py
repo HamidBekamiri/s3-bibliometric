@@ -92,6 +92,10 @@ def _main_comms(res, n: Optional[int] = None) -> List[int]:
 def _has(res, col: str) -> bool:
     if col == "citations":
         return bool(res.citation_pairs)
+    if col == "years":  # a time span, not just a year column
+        return res.papers["year"].nunique() >= 3
+    if col == "impact":  # enough cited papers to compare impact
+        return (res.papers["cited_by"] > 0).mean() >= 0.2
     s = res.papers.get(col)
     return s is not None and s.notna().any() and (s.astype(str).str.strip() != "").any()
 
@@ -100,6 +104,18 @@ def _split(v, sep=";") -> List[str]:
     if v is None or (isinstance(v, float) and math.isnan(v)):
         return []
     return [p.strip() for p in str(v).split(sep) if p.strip() and p.strip().lower() != "nan"]
+
+
+_REF = re.compile(r"[^;].*?\(\d{4}[a-z]?\)")
+
+
+def _split_refs(v) -> List[str]:
+    """Split a Scopus References cell into single references. Each reference ends with
+    '(YYYY)'. Splitting on ';' alone breaks newer exports, which also use ';' between
+    the authors inside one reference."""
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return []
+    return [m.group(0).strip(" ;") for m in _REF.finditer(str(v))]
 
 
 def _authors(v) -> List[str]:
@@ -193,6 +209,17 @@ def q_threshold(res) -> Answer:
         f"({b['n_papers'] / len(res.papers):.0%}) fall into {b['n_communities']} communities, "
         f"with a silhouette of {b['silhouette']:.3f}.",
     ]
+    lo, hi = scan["threshold"].min(), scan["threshold"].max()
+    if b["threshold"] in (lo, hi):
+        edge = "lowest" if b["threshold"] == lo else "highest"
+        a.findings.append(f"Warning: the best threshold is the {edge} value scanned, so SII may peak "
+                          f"outside the range. Re-run with a wider range, e.g. "
+                          f"S3Config(thresholds=...), as a sensitivity check.")
+    share = b["n_papers"] / len(res.papers)
+    if share < 0.5:
+        a.findings.append(f"Only {share:.0%} of papers cluster: the corpus is probably broad or mixes several "
+                          "fields. Consider narrowing the search, or read the communities as the "
+                          "field's tightest topic clusters.")
     a.tables["Threshold scan"] = scan.round(4)
     a.chart = {"type": "line", "title": "SII by threshold", "x": scan["threshold"].tolist(),
                "series": {"SII": scan["sii"].round(2).tolist()}, "x_label": "S3 threshold"}
@@ -214,7 +241,9 @@ def q_quality(res) -> Answer:
     a.findings += [
         f"Modularity = {mod:.3f} ({'strong' if mod >= 0.4 else 'moderate' if mod >= 0.3 else 'weak'} "
         f"community structure; above 0.3 is usually considered meaningful).",
-        f"Silhouette = {res.best['silhouette']:.3f}; graph density = {dens:.4f}; "
+        f"Silhouette = {res.best['silhouette']:.3f} "
+        f"({'well separated' if res.best['silhouette'] >= 0.5 else 'reasonably separated' if res.best['silhouette'] >= 0.25 else 'weakly separated'}); "
+        f"graph density = {dens:.4f}; "
         f"{comps} connected component(s) among linked papers.",
     ]
     a.tables["Structure quality"] = pd.DataFrame([{
@@ -256,8 +285,8 @@ def q_validation(res) -> Answer:
     vocab: Dict[str, int] = {}
     rows, cols = [], []
     for k, i in enumerate(sample):
-        for r in _split(P["references"].iat[i]):
-            key = re.sub(r"[^a-z0-9]+", " ", r.lower()).strip()[:120]
+        for r in _split_refs(P["references"].iat[i]):
+            key = re.sub(r"[^a-z0-9]+", " ", r.lower()).strip()[:150]
             if key:
                 rows.append(k)
                 cols.append(vocab.setdefault(key, len(vocab)))
@@ -315,8 +344,10 @@ def q_validation(res) -> Answer:
         a.findings.append("No reference lists in the export, so S3 cannot be compared with "
                           "bibliographic coupling.")
         return a
+    cc_ok = "CC" in corr and not np.isnan(corr.loc["S3", "CC"])
     a.findings.append(f"S3 correlates r = {corr.loc['S3', 'BC']:.2f} with bibliographic coupling"
-                      + (f" and r = {corr.loc['S3', 'CC']:.2f} with co-citation." if "CC" in corr else "."))
+                      + (f" and r = {corr.loc['S3', 'CC']:.2f} with co-citation." if cc_ok else
+                         " (too few in-corpus citations to compare with co-citation)."))
     if ov:
         a.findings.append(f"On average {np.mean(ov):.0%} of a paper's 10 nearest neighbours are shared "
                           "between S3 and bibliographic coupling (Jaccard).")
@@ -424,6 +455,10 @@ def q_foundational(res) -> Answer:
     if not has_local:
         a.findings.append("Local citations need References and EID in the export; only global "
                           "papers are shown.")
+    cited = (P["cited_by"] > 0).mean()
+    if cited < 0.2:
+        a.findings.append(f"Only {cited:.0%} of papers have been cited so far, so citation-based "
+                          "rankings here are still unstable.")
     a.tables["Foundational papers (Table 3)"] = t
     return a
 
@@ -769,7 +804,11 @@ def q_funding(res) -> Answer:
     rows = []
     for i, v in res.papers["funding"].items():
         for f in _split(v):
-            name = f.split(",")[0].strip()
+            name = re.sub(r",?\s*\([^)]*\)\s*$", "", f).strip()
+            parts = [x.strip() for x in name.split(",")]
+            if len(parts) > 1 and parts[-1].replace("-", "").isupper() and len(parts[-1]) <= 10:
+                parts = parts[:-1]
+            name = ", ".join(parts)
             if len(name) > 3 and not name.isdigit():
                 rows.append((i, name))
     if not rows:
@@ -809,9 +848,11 @@ def q_integration(res) -> Answer:
     a.findings.append("Integration is the Rao-Stirling diversity of each paper's S3 links across "
                       "communities, weighted by how different those communities are (1 - mean S3). "
                       "It needs no subject categories.")
-    if len(t):
-        a.findings.append(f"Most interdisciplinary community: {_name(res, t.iloc[0]['community'])}; "
-                          f"most self-contained: {_name(res, t.iloc[-1]['community'])}.")
+    big = t[t["papers"] >= 5]
+    if len(big) >= 2:
+        a.findings.append(f"Among communities with at least 5 papers, the most interdisciplinary is "
+                          f"{_name(res, big.iloc[0]['community'])} and the most self-contained is "
+                          f"{_name(res, big.iloc[-1]['community'])}.")
     top = P.dropna(subset=["integration"]).sort_values("integration", ascending=False).head(15)
     a.tables["Integration per community"] = t
     a.tables["Most integrative papers"] = top[["title", "year", "community", "cited_by", "integration"]].round(4)
@@ -900,10 +941,10 @@ QUESTIONS: List[Question] = [
     Question("Q12", 3, "Recommended", "Which papers bridge communities?",
              "Finds boundary-spanning work.", "Participation coefficient of S3 links", (), q_bridges),
     Question("Q13", 4, "Essential", "Which communities are emerging, growing or declining?",
-             "Shows where the field is heading.", "Papers per year, momentum vs field", ("year",), q_growth),
+             "Shows where the field is heading.", "Papers per year, momentum vs field", ("years",), q_growth),
     Question("Q14", 4, "Recommended", "Which concepts are rising or fading, and how far have they spread?",
              "Tracks concept diffusion across time and communities.",
-             "Keyword share trend and community spread (RQ5)", ("keywords", "year"), q_concepts),
+             "Keyword share trend and community spread (RQ5)", ("keywords", "years"), q_concepts),
     Question("Q15", 5, "Recommended", "Who are the leading authors?",
              "Identifies key researchers by recency, output and impact.",
              "RFI score (recency, frequency, impact)", ("authors",), q_authors),
@@ -927,9 +968,9 @@ QUESTIONS: List[Question] = [
              "Rao-Stirling diversity of S3 links, disparity = 1 - mean S3", (), q_integration),
     Question("Q22", 6, "Optional", "Are interdisciplinary papers cited more?",
              "Tests whether integration pays off in impact.",
-             "Spearman: integration vs citations per year", ("year",), q_integration_impact),
+             "Spearman: integration vs citations per year", ("years", "impact"), q_integration_impact),
     Question("Q23", 6, "Optional", "Is the field becoming more interdisciplinary?",
-             "Trend of integration over time.", "Mean integration per year", ("year",), q_integration_trend),
+             "Trend of integration over time.", "Mean integration per year", ("years",), q_integration_trend),
 ]
 _BY_ID = {q.qid: q for q in QUESTIONS}
 
@@ -948,9 +989,10 @@ def available(res, q: Question) -> Tuple[bool, str]:
         return False, "No community structure found."
     missing = [n for n in q.needs if not _has(res, n)]
     if missing:
-        if "citations" in missing:
-            return False, "Needs References and EID in the export (no in-corpus citations found)."
-        return False, "Needs column(s): " + ", ".join(missing)
+        msgs = {"citations": "no in-corpus citations were found (needs References and EID)",
+                "years": "the papers cover fewer than 3 publication years",
+                "impact": "fewer than 20% of the papers have been cited yet"}
+        return False, "Not enough data: " + "; ".join(msgs.get(m, f"missing column '{m}'") for m in missing) + "."
     return True, ""
 
 

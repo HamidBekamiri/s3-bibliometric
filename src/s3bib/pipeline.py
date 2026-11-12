@@ -116,6 +116,7 @@ def load_papers(
     df["cited_by"] = pd.to_numeric(df["cited_by"], errors="coerce").fillna(0).astype(int)
     for k in ("title", "abstract"):
         df[k] = df[k].fillna("").astype(str)
+    df.loc[df["abstract"].str.startswith("[No abstract"), "abstract"] = ""
 
     if start_year is not None:
         df = df[df["year"] >= start_year]
@@ -530,7 +531,7 @@ def run_s3(source: Union[str, Path, pd.DataFrame],
         pairs = citation_edges(df)
         if pairs:
             same = Counter(j for i, j in pairs
-                           if pd.notna(df.at[i, "community"])
+                           if pd.notna(df.at[i, "community"]) and pd.notna(df.at[j, "community"])
                            and df.at[i, "community"] == df.at[j, "community"])
             df["local_citations"] = [same.get(i, 0) for i in range(n)]
 
