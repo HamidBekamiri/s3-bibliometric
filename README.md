@@ -8,6 +8,9 @@ Give it a Scopus export. It finds the research communities of the field, their c
 papers, outliers, and the citation flows between communities. Your AI assistant can then
 label the communities and write up the intellectual structure.
 
+**No coding needed**: see [Use it without coding: Claude or ChatGPT](#use-it-without-coding-claude-or-chatgpt)
+for step-by-step setup with Claude Desktop, Claude Code, Claude.ai or ChatGPT.
+
 ## How S3 works
 
 The library follows the published method: Bekamiri, Østergaard & Timmermans (2027),
@@ -275,52 +278,135 @@ community (the top 10, five per row): 30 words each by default, 10 to 50 with on
 In Claude, use the **`s3_guided`** prompt, or ask: *"Walk me through the S3 questions for
 my Scopus file."*
 
-## Use it from Claude (no install, no API key)
+## Use it without coding: Claude or ChatGPT
 
-You need [uv](https://docs.astral.sh/uv/getting-started/installation/).
+S3 runs on your own computer, so your data stays with you. How you talk to it depends on
+your app:
 
-**Claude Code**
+| Your app | How | Setup |
+|---|---|---|
+| **Claude Desktop** (Mac, Windows) | Chat with S3 directly: Claude runs the analysis and explains it | Once: install uv, paste 6 lines into Claude's settings |
+| **Claude Code** | Same, from the terminal | Once: install uv, one command |
+| **Claude.ai (browser, phone) or ChatGPT** | Make the report with one command, then upload it to the chat | Once: install uv |
+
+Claude.ai in the browser and ChatGPT cannot start programs on your computer, so they cannot
+run S3 themselves; they can read and explain the report and files S3 makes.
+
+### Step 0: export your papers from Scopus
+
+In Scopus, select all results → **Export** → **CSV**. Tick every information group
+(citation, bibliographical, abstract and keywords, funding, and **references**). Title and
+abstract are required; the rest (year, citations, authors, affiliations, keywords, references,
+funding) unlock more of the analysis. Web of Science and OpenAlex exports work if they have
+Title and Abstract columns.
+
+### Step 1: install uv (once)
+
+uv starts S3 for you and installs everything it needs.
+
+- **Mac**: open *Terminal* and paste:
+  ```bash
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  ```
+- **Windows**: open *PowerShell* and paste:
+  ```powershell
+  powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+  ```
+
+Close and reopen the Terminal (or PowerShell) window afterwards.
+
+### Step 2a: Claude Desktop
+
+1. In Claude Desktop open **Settings → Developer → Edit Config**. This opens
+   `claude_desktop_config.json`.
+2. Paste this and save (if the file already has `"mcpServers"`, add only the
+   `"s3-bibliometric"` part inside it):
+   ```json
+   {
+     "mcpServers": {
+       "s3-bibliometric": {
+         "command": "uvx",
+         "args": ["s3-bibliometric"]
+       }
+     }
+   }
+   ```
+3. Quit Claude Desktop completely and open it again. S3's tools now appear in Claude's
+   tools menu in the chat box.
+4. Ask, for example:
+
+   > Run S3 on ~/Downloads/scopus.csv. Label the communities, walk me through the
+   > level-1 questions, and build the literature-review report.
+
+   Claude asks which language model to use (mpnet, the model of the S3 paper, is the default)
+   and whether you have a Scopus API key for exact citations (optional; never paste a key into
+   the chat). The first run downloads the model (about 420 MB) and takes a few minutes; later
+   runs are fast.
+
+**If the tools do not appear**: Claude Desktop may not find `uvx`. In Terminal run
+`which uvx` (Mac) or `where uvx` (Windows) and put that full path in `"command"`, e.g.
+`"command": "/Users/you/.local/bin/uvx"`.
+
+### Step 2b: Claude Code
 
 ```bash
 claude mcp add s3-bibliometric -- uvx s3-bibliometric
 ```
 
-**Claude Desktop**: add this to `claude_desktop_config.json` (Settings → Developer → Edit Config):
+Then ask the same as above.
 
-```json
-{
-  "mcpServers": {
-    "s3-bibliometric": {
-      "command": "uvx",
-      "args": ["s3-bibliometric"]
-    }
-  }
-}
-```
+### Step 2c: Claude.ai in the browser, or ChatGPT
 
-Then ask, for example:
+1. Make the report with one command in Terminal (Mac) or PowerShell (Windows). Replace the
+   file path with yours:
+   ```bash
+   uvx --from s3-bibliometric s3bib report ~/Downloads/scopus.csv -o ~/Desktop/s3_report.html
+   ```
+   It asks which language model to use (press Enter for the default) and whether you have a
+   Scopus API key (answer n if not). Add `--level 1` for only the published S3 method.
+2. Open `s3_report.html` in your browser. At the top, click the downloads: **Themes table
+   (CSV)**, **Methods paragraph**, and the **reading list (RIS)** for Zotero, EndNote or Mendeley.
+3. Upload the report and the downloaded files to Claude.ai or ChatGPT, and ask, for example:
 
-> Run S3 on ~/Downloads/scopus_innovation.csv, label the communities, and write the
-> intellectual-structure report.
+   > This is an S3 analysis of my literature. Name each theme in 3-5 words, summarise the
+   > field's structure, and draft the structure of my literature review with the gaps to
+   > discuss.
 
-You can also use the built-in **`s3_report`** prompt. The first run downloads the model
-(~420 MB) and PyTorch, so it takes a few minutes. Later runs are fast.
+### What you can ask
+
+- *"Which questions can S3 answer for my data?"* — the ranked research questions, in three
+  levels: **1** the published S3 method, **2** authors, countries, journals, funders and
+  citation networks, **3** predictions (only when you ask).
+- *"What are the main themes, and which papers should I read first?"*
+- *"Where are the knowledge gaps?"* · *"Which themes are emerging?"*
+- *"Write the methods paragraph for my paper."*
+- *"Build the literature-review report at level 1."*
+
+### The tools Claude uses
 
 | Tool | What it does |
 |---|---|
-| `run_s3_analysis` | Run S3 on a CSV/XLSX (optional year range); returns a `run_id` and a summary |
+| `run_s3_analysis` | Run S3 on a CSV/XLSX (year range, map option, strict citation matching); returns a `run_id` and a summary |
+| `list_embedding_models` | The language models you can choose (default: mpnet, as in the S3 paper) |
+| `enrich_citations` | Exact citations from the Scopus API (needs `SCOPUS_API_KEY` in the server's environment) |
 | `list_runs` | Saved runs |
+| `list_questions` | The ranked research questions for a level (1, 2 or 3) and whether your data supports each |
+| `answer_question` | Findings and tables for one question, e.g. `Q8` |
+| `build_report` | The literature-review report (or every question in order), at a level |
 | `get_threshold_scan` | Silhouette / SII / communities for each threshold |
 | `list_communities` | Community table incl. QI/MI and saved labels |
 | `get_community` | Central papers with abstracts, keywords, TF-IDF terms |
+| `save_community_labels` | Store the labels the assistant proposes |
 | `get_outliers` | Unconnected papers + nearest community |
 | `get_citation_structure` | Community × community citation matrix + QI/MI |
+| `get_knowledge_tree` | How communities grow and split over time |
 | `search_papers` | Semantic search inside the corpus |
-| `save_community_labels` | Store the labels the assistant proposes |
 | `export_results` | Write CSV outputs |
 | `export_networks` | One-mode, two-mode and knowledge-graph networks as CSV + GraphML |
 
-Runs are saved in `~/s3bib_runs` (change it with the `S3BIB_HOME` environment variable).
+Prompts: **`s3_guided`** walks through the questions stage by stage; **`s3_report`** writes the
+intellectual-structure report. Runs are saved in `~/s3bib_runs` (change it with the
+`S3BIB_HOME` environment variable).
 
 ## Use it from Python
 
