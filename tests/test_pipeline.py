@@ -460,3 +460,32 @@ def test_layer_overlap_homophily_direction(res, tmp_path):
     assert [q for q in res.questions()["id"] if q in ("Q35", "Q36", "Q37")] == ["Q35", "Q37", "Q36"]  # by stage
     html = res.report(tmp_path / "r.html").read_text()
     assert all(f'id="{q}"' in html for q in ("Q35", "Q36", "Q37")) and "Could not compute" not in html
+
+
+def test_projection_backbone_and_four_cycles(res, df, tmp_path):
+    """Significant ties and four-cycle clustering of the two-mode networks behind coupling,
+    co-citation and co-authorship (Q35 projection check, S3Config(backbone=True))."""
+    import scipy.sparse as sp
+    from s3bib.backbone import backbone, bipartite_clustering, projection_clustering
+    from s3bib.layers import layers, projection_check, two_mode
+    # four-cycles: two papers sharing two items close every 3-path; a path has no square
+    assert bipartite_clustering(sp.csr_matrix(np.ones((2, 2)))) == pytest.approx(1.0)
+    assert bipartite_clustering(sp.csr_matrix(np.array([[1, 1, 0], [0, 1, 1]]))) == 0.0
+    assert projection_clustering(np.array([0 * 3 + 1, 0 * 3 + 2, 1 * 3 + 2]), 3) == pytest.approx(1.0)
+    rng = np.random.default_rng(0)
+    for name, B in two_mode(res).items():
+        B = sp.csr_matrix(B).tocoo()
+        # degree-preserving shuffle of the real ties: no structure left, so nothing is significant
+        R = sp.csr_matrix((np.ones(B.nnz), (B.row, rng.permutation(B.col))), shape=B.shape)
+        assert backbone(R)["keys"].size == 0, name
+        assert backbone(B)["tested"] == layers(res, backbone=False)[name].size, name  # every tie is tested
+    raw, sig = layers(res, backbone=False), layers(res, backbone=True)
+    assert all(np.isin(sig[k], raw[k]).all() for k in sig)  # significant ties are a subset
+    pc = projection_check(res)
+    assert set(pc["layer"]) == {"coupling", "co-citation", "co-authorship"}
+    assert (pc["clustering of the projection"] > pc["four-cycle clustering (two-mode)"]).all()  # projections inflate
+    r = s3bib.run_s3(df, s3bib.S3Config(map_weights="text+coupling", backbone=True), **QUIET)
+    assert r.config.backbone and r.best
+    a = r.answer("Q35")
+    assert "Projection check: significant ties and four-cycle clustering" in a.tables
+    assert any("significant ties here" in f for f in a.findings)

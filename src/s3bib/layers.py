@@ -69,26 +69,66 @@ def _author_matrix(res):
                          shape=(len(res.papers), max(1, len(vocab))))
 
 
-def layers(res) -> Dict[str, np.ndarray]:
-    """{layer name: sorted unique pair keys i*n+j (i<j)}; empty layers are left out. Cached."""
-    if getattr(res, "_layers", None) is not None:
-        return res._layers
+def two_mode(res) -> Dict[str, "sp.csr_matrix"]:
+    """The two-mode networks behind the projected layers (rows = papers)."""
     from .hybrid import citation_matrix, reference_matrix
     P = res.papers
-    n = len(P)
-    out: Dict[str, np.ndarray] = {"text": _text_layer(res)}
+    out = {}
     if "references" in P and P["references"].notna().any():
-        R = reference_matrix(P)
-        out["coupling"] = _pairs(R @ R.T)
+        out["coupling"] = reference_matrix(P)                          # papers x references
     if res.citation_pairs:
-        C = citation_matrix(n, res.citation_pairs)
-        out["co-citation"] = _pairs(C.T @ C)
-        out["direct citation"] = _key(res.citation_pairs, n)
+        out["co-citation"] = citation_matrix(len(P), res.citation_pairs).T.tocsr()  # cited x citing
     if "authors" in P and P["authors"].notna().any():
-        A = _author_matrix(res)
-        out["co-authorship"] = _pairs(A @ A.T)
-    res._layers = {k: v for k, v in out.items() if v.size}
-    return res._layers
+        out["co-authorship"] = _author_matrix(res)                     # papers x authors
+    return out
+
+
+def layers(res, backbone: Optional[bool] = None) -> Dict[str, np.ndarray]:
+    """{layer name: sorted unique pair keys i*n+j (i<j)}; empty layers are left out. Cached.
+    backbone=True (default: S3Config.backbone) keeps only the significant ties of the
+    projected layers (coupling, co-citation, co-authorship)."""
+    bb = res.config.backbone if backbone is None else backbone
+    cache = getattr(res, "_layers", None) or {}
+    if bb in cache:
+        return cache[bb]
+    from .backbone import backbone as sig
+    n = len(res.papers)
+    out: Dict[str, np.ndarray] = {"text": _text_layer(res)}
+    tm = two_mode(res)
+    for name in ("coupling", "co-citation", "direct citation", "co-authorship"):
+        if name == "direct citation":
+            if res.citation_pairs:
+                out[name] = _key(res.citation_pairs, n)
+        elif name in tm:
+            out[name] = sig(tm[name], res.config.backbone_alpha)["keys"] if bb else _pairs(tm[name] @ tm[name].T)
+    cache[bb] = {k: v for k, v in out.items() if v.size}
+    res._layers = cache
+    return cache[bb]
+
+
+def projection_check(res) -> pd.DataFrame:
+    """Per projected layer: all ties vs significant ties, and clustering of the projection
+    vs clustering of the two-mode network itself (four-cycles)."""
+    from .backbone import bipartite_clustering, projection_clustering
+    n = len(res.papers)
+    raw, sig = layers(res, backbone=False), layers(res, backbone=True)
+    t = raw.get("text", np.zeros(0, dtype=np.int64))
+    pairs_total = n * (n - 1) / 2
+    rows = []
+    for name, B in two_mode(res).items():
+        if name not in raw:
+            continue
+        a, b = raw[name], sig.get(name, np.zeros(0, dtype=np.int64))
+        tb = np.intersect1d(b, t, assume_unique=True).size
+        rows.append({"layer": name, "ties": int(a.size), "significant ties": int(b.size),
+                     "share kept": b.size / a.size if a.size else np.nan,
+                     "clustering of the projection": projection_clustering(a, n),
+                     "clustering of the significant ties": projection_clustering(b, n),
+                     "four-cycle clustering (two-mode)": bipartite_clustering(B),
+                     "share of significant ties also text links": tb / b.size if b.size else np.nan,
+                     "lift over chance (significant ties vs text)":
+                         (tb / b.size) / (t.size / pairs_total) if b.size and t.size else np.nan})
+    return pd.DataFrame(rows)
 
 
 # --------------------------------------------------------------- overlap --

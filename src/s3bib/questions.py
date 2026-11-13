@@ -1208,10 +1208,34 @@ def q_layers(res) -> Answer:
     a.findings.append("Lift = how many times more often a tie of one layer is also a tie of the other than a "
                       "random pair is (1 = chance). Layers that rarely overlap with text add the most when "
                       "mixed into the map (S3Config(map_weights=...)).")
+    from .layers import projection_check
+    pc_t = projection_check(res)
+    if res.config.backbone:
+        a.findings.append("Coupling, co-citation and co-authorship keep only their significant ties here "
+                          "(S3Config(backbone=True)).")
+    for r in pc_t.itertuples(index=False):
+        row = dict(zip(pc_t.columns, r))
+        cp, c4 = row["clustering of the projection"], row["four-cycle clustering (two-mode)"]
+        txt = (f"Projection check, {row['layer']}: {row['share kept']:.0%} of its {row['ties']:,} ties are "
+               f"significant (more shared items than chance given how many items each paper has and how "
+               f"popular they are; FDR {res.config.backbone_alpha:g}).")
+        if pd.notna(cp) and pd.notna(c4):
+            txt += (f" Its clustering is {cp:.2f} as a projection but {c4:.2f} in the two-mode network "
+                    f"(four-cycles)" + (", so most of the apparent clustering is made by the projection."
+                                        if c4 < cp / 2 else "."))
+        sh = row["share of significant ties also text links"]
+        if pd.notna(sh):
+            txt += f" {sh:.1%} of the significant ties are also text links."
+        a.findings.append(txt)
+    if len(pc_t) and not res.config.backbone:
+        a.findings.append("To build the map and Q35-Q37 from significant ties only, use S3Config(backbone=True) "
+                          "(CLI: --backbone).")
     s = summ.copy()
     s["density"] = s["density"].map(lambda x: f"{x:.5f}")
     s["share also a text link"] = s["share also a text link"].round(3)
     a.tables["Layers"] = s
+    if len(pc_t):
+        a.tables["Projection check: significant ties and four-cycle clustering"] = pc_t.round(4)
     a.tables["Jaccard overlap between layers"] = J.round(3).reset_index().rename(columns={"index": "layer"})
     a.tables["Lift over chance (rows: tie in this layer; columns: also a tie here)"] = \
         lift.round(1).reset_index().rename(columns={"index": "layer"})
@@ -1356,7 +1380,8 @@ QUESTIONS: List[Question] = [
     Question("Q35", 1, "Recommended", "Do text, citation and co-authorship ties agree?",
              "Shows what each map option adds: relations the text map misses.",
              "Multiplex layers (text, coupling, co-citation, direct citation, co-authorship): "
-             "Jaccard overlap and lift over chance", (), q_layers),
+             "Jaccard overlap and lift over chance; projection check: significant ties (degree-preserving "
+             "null model, FDR) and four-cycle clustering of the two-mode networks", (), q_layers),
     Question("Q5", 2, "Essential", "What are the main research communities?",
              "The core result: the intellectual structure of the field.",
              "Leiden (directed modularity) on the time-ordered S3 graph", (), q_communities),

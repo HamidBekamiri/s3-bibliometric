@@ -14,6 +14,8 @@ Choose one of four maps with S3Config(map_weights=...):
   "text+cocitation"  75% text + 25% co-citation
   "text+direct"      75% text + 25% direct citation
 A dict sets custom weights (normalised to sum to 1); "hybrid" gives all four 25%.
+S3Config(backbone=True) keeps only the significant coupling and co-citation ties
+(s3bib.backbone): sharing one very popular reference no longer links two papers.
 
 Because most pairs have no citation relation, hybrid values are on a different scale than
 S3 (a pair with S3 0.8 and no citation tie scores 0.2 at 25% weights). The threshold scan
@@ -134,18 +136,36 @@ def cocitation_matrix(n: int, pairs: Sequence[Tuple[int, int]]) -> np.ndarray:
     return _salton(C.T.tocsr())
 
 
+def _significant(S: np.ndarray, B, alpha: float) -> np.ndarray:
+    """Keep only the significant ties of a projection (s3bib.backbone), symmetric."""
+    from .backbone import backbone
+    n = S.shape[0]
+    k = backbone(B, alpha)["keys"]
+    M = np.zeros_like(S)
+    i, j = k // n, k % n
+    M[i, j] = S[i, j]
+    M[j, i] = S[j, i]
+    return M
+
+
 def hybrid_matrix(emb: np.ndarray, df: pd.DataFrame, pairs: Sequence[Tuple[int, int]],
-                  weights: Dict[str, float]) -> np.ndarray:
+                  weights: Dict[str, float], backbone_alpha: Optional[float] = None) -> np.ndarray:
+    """Weighted sum of the components. backbone_alpha: keep only the significant ties of
+    coupling and co-citation (false discovery rate alpha), as in S3Config(backbone=True)."""
     n = len(df)
     H = np.zeros((n, n), dtype=np.float32)
     if weights.get("s3"):
         H += weights["s3"] * np.clip(emb @ emb.T, 0, None).astype(np.float32)
     if weights.get("coupling"):
-        H += weights["coupling"] * coupling_matrix(df)
+        R = reference_matrix(df)
+        C = _salton(R)
+        H += weights["coupling"] * (_significant(C, R, backbone_alpha) if backbone_alpha else C)
     if weights.get("direct"):
         H += weights["direct"] * direct_matrix(n, pairs)
     if weights.get("cocitation"):
-        H += weights["cocitation"] * cocitation_matrix(n, pairs)
+        Ct = citation_matrix(n, pairs).T.tocsr()
+        C = _salton(Ct)
+        H += weights["cocitation"] * (_significant(C, Ct, backbone_alpha) if backbone_alpha else C)
     np.fill_diagonal(H, 1.0)
     return H
 

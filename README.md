@@ -211,6 +211,29 @@ co-authorship.
 
 A paper can only cite older papers, so reciprocity is measured between communities, not papers.
 
+**Projection check (Q35).** Coupling, co-citation and co-authorship are one-mode projections of
+two-mode networks (papers–references, cited–citing papers, papers–authors). Projections
+inflate ties and clustering: one popular reference links every paper that cites it, and a
+ten-author paper makes a clique of ten (Jankowski et al. 2026, *Commun. Phys.* 9:35). Q35 therefore
+reports, for each projected layer:
+
+- **Significant ties:** two papers share more items than chance predicts from how many items
+  each has and how popular the items are (stochastic degree sequence model with Chung–Lu
+  probabilities, Poisson test, Benjamini–Hochberg FDR 0.05 over all paper pairs). With the ties
+  shuffled and all degrees kept, no tie is significant.
+- **Four-cycle clustering** of the two-mode network itself (Robins & Alexander), next to the
+  clustering of the projection, so you can see how much clustering the projection creates.
+
+To build the map and Q35–Q37 from significant ties only:
+
+```python
+res = s3bib.run_s3("scopus.csv", s3bib.S3Config(map_weights="text+coupling", backbone=True))
+```
+
+```bash
+s3bib report scopus.csv --map text+coupling --backbone
+```
+
 ```python
 from s3bib.layers import layers, overlap, homophily, pagerank, flow_direction
 J, lift, summary = overlap(res)      # Q35 tables

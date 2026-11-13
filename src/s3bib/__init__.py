@@ -6,4 +6,4 @@ from .scopus import enrich_citations, ScopusAccessError
 
 __all__ = ["S3Config", "S3Result", "run_s3", "load_papers", "set_seed", "QUESTIONS", "Answer",
            "EMBEDDING_MODELS", "DEFAULT_MODEL", "enrich_citations", "ScopusAccessError"]
-__version__ = "0.10.0"
+__version__ = "0.11.0"

@@ -103,6 +103,7 @@ def run_s3_analysis(
     remove_duplicates: bool = True,
     map_relations: str = "text",
     strict_citations: bool = False,
+    significant_ties_only: bool = False,
 ) -> Dict[str, Any]:
     """Run the S3 pipeline on a Scopus CSV/Excel export (needs Title and Abstract;
     Year, Cited by, Authors, Author Keywords, References and EID are used if present).
@@ -118,7 +119,9 @@ def run_s3_analysis(
     answer and report follows it: "text" (default; S3 text similarity, the published method),
     "text+coupling", "text+cocitation" or "text+direct" (75% text + 25% bibliographic
     coupling, co-citation or direct citation). strict_citations=True
-    stops short titles such as "Introduction" from matching unrelated references. Can take several minutes
+    stops short titles such as "Introduction" from matching unrelated references.
+    significant_ties_only=True keeps only coupling, co-citation and co-authorship ties that are
+    significant under a degree-preserving null model (in the map and Q35-Q37). Can take several minutes
     for thousands of papers the first time; embeddings are cached afterwards.
 
     Returns a run_id plus a summary: best threshold, communities, outlier count.
@@ -131,6 +134,8 @@ def run_s3_analysis(
            f"{community_method}|{embedding_model}|{remove_duplicates}")
     if map_relations not in ("s3", "text") or strict_citations:  # keeps earlier run ids unchanged
         key += f"|{map_relations}|{strict_citations}"
+    if significant_ties_only:
+        key += "|backbone"
     run_id = f"{stem}_{hashlib.sha1(key.encode()).hexdigest()[:8]}"
 
     if not rerun and (_run_dir(run_id) / "run.json").exists():
@@ -140,7 +145,8 @@ def run_s3_analysis(
                        cache_dir=str(HOME / "_cache"), threshold=threshold,
                        community_method=community_method, model_name=embedding_model,
                        dedupe=remove_duplicates, map_weights=map_relations,
-                       citation_match="strict" if strict_citations else "lenient")
+                       citation_match="strict" if strict_citations else "lenient",
+                       backbone=significant_ties_only)
         res = run_s3(p, cfg)
         res.save(_run_dir(run_id))
         _RUNS[run_id] = res

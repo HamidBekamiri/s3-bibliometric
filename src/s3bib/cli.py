@@ -61,6 +61,9 @@ def main(argv=None) -> None:
                         "report follows this choice.")
     r.add_argument("--strict-citations", action="store_true",
                    help="Short titles (e.g. 'Introduction') only count as cited when year and first author match")
+    r.add_argument("--backbone", action="store_true",
+                   help="Keep only significant coupling, co-citation and co-authorship ties (in the map "
+                        "and in Q35-Q37): sharing one popular reference or author is not enough")
     r.add_argument("--prediction", action="store_true",
                    help="Add link prediction and GNN questions (Q24-Q34) to the report")
     r.add_argument("--save", help="Also save the run to this folder (reload with S3Result.load)")
@@ -93,7 +96,7 @@ def main(argv=None) -> None:
     cfg = S3Config(model_name=model, start_year=a.start_year, end_year=a.end_year, threshold=a.threshold,
                    community_method=a.method, dedupe=not a.no_dedupe, seed=a.seed,
                    map_weights=a.map, citation_match="strict" if a.strict_citations else "lenient",
-                   prediction=a.prediction)
+                   prediction=a.prediction, backbone=a.backbone)
     bar = lambda s, x: print(f"\r{x:4.0%}  {s:<50}", end="", file=sys.stderr)
     res = run_s3(a.csv, cfg, progress=bar)
     print(file=sys.stderr)

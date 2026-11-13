@@ -99,6 +99,10 @@ class S3Config:
     # (short titles such as "Introduction" also need the year and first author to match).
     citation_match: str = "lenient"
     prediction: bool = False           # include the prediction questions (link prediction, GNNs)
+    # Projected relations (coupling, co-citation, co-authorship) keep only ties that are
+    # significant under a degree-preserving null model (see s3bib.backbone): in the map and in Q35-Q37.
+    backbone: bool = False
+    backbone_alpha: float = 0.05       # false discovery rate for significant ties
 
     def __post_init__(self):
         from .hybrid import resolve_weights
@@ -520,7 +524,8 @@ class S3Result:
         from .hybrid import hybrid_matrix
         if getattr(self, "_hybrid", None) is None:
             self._hybrid = hybrid_matrix(self.embeddings, self.papers, self.citation_pairs,
-                                         self.config.map_weights)
+                                         self.config.map_weights,
+                                         self.config.backbone_alpha if self.config.backbone else None)
         h = self._hybrid
         if directed and self.config.temporal_mask:
             h = apply_temporal_mask(h, self.papers["year"].to_numpy(dtype=float))
@@ -822,7 +827,7 @@ def run_s3(source: Union[str, Path, pd.DataFrame],
         say("Matching in-corpus citations", 0.5)
         pairs = citation_edges(df, strict=cfg.citation_match == "strict")
         say("Building the hybrid map (S3 + citation relations)", 0.52)
-        s3 = hybrid_matrix(emb, df, pairs, cfg.map_weights)
+        s3 = hybrid_matrix(emb, df, pairs, cfg.map_weights, cfg.backbone_alpha if cfg.backbone else None)
         s3_dir = apply_temporal_mask(s3, years) if cfg.temporal_mask else s3
         from .models import default_thresholds
         if tuple(cfg.thresholds) == tuple(default_thresholds(cfg.model_name)):
