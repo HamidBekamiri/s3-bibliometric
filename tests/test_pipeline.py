@@ -415,9 +415,11 @@ def test_four_map_options(df, tmp_path):
 def test_sections_closed_and_word_cloud(res, tmp_path):
     html = res.report(tmp_path / "w.html").read_text()
     assert "<details open" not in html and "<details>" in html  # everything opens on click
-    wc = [c for c in res.answer("Q6").charts if c["type"] == "wordcloud"][0]
-    assert wc["n"] == 10 and all(len(v["words"]) <= 50 for v in wc["sets"].values())
-    assert 's3WC("' in html and '<option value="50">50 words</option>' in html
+    wg = res.answer("Q6").chart  # one word cloud per main community, 30 words by default
+    assert wg["type"] == "wordgrid" and wg["n"] == 30
+    assert len(wg["clouds"]) == min(10, len(res.communities())) and all(len(c["words"]) <= 50 for c in wg["clouds"])
+    assert 's3WG("' in html and html.count('class="wg-cell"') == len(wg["clouds"])
+    assert '<option value="30" selected>30 words</option>' in html
 
 
 def test_strict_citation_matching(df):

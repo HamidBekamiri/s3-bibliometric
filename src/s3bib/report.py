@@ -459,40 +459,70 @@ def _wordcloud(spec: Dict[str, Any]) -> str:
 
 WC_JS = r"""
 <script>
+const s3WCctx=document.createElement('canvas').getContext('2d');
+function s3WCLayout(ws,color,W,H,big,small){
+  if(!ws.length) return '';
+  const mx=Math.max(...ws.map(w=>w[1])), mn=Math.min(...ws.map(w=>w[1]));
+  const placed=[]; let out='';
+  const esc=t=>t.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  ws.forEach(([w,v])=>{
+    const fs=Math.round(small+(big-small)*Math.sqrt((v-mn)/((mx-mn)||1)));
+    s3WCctx.font=`600 ${fs}px system-ui,-apple-system,sans-serif`;
+    const tw=s3WCctx.measureText(w).width, th=fs*0.9;
+    for(let t=0;t<3000;t++){
+      const a=0.3*t, r=1.2*a*Math.max(1,W/640), x=W/2+r*Math.cos(a)*(W/H)-tw/2, y=H/2+r*Math.sin(a)*0.9+th/2;
+      const b=[x-2,y-th-2,x+tw+2,y+3];
+      if(b[0]<2||b[2]>W-2||b[1]<2||b[3]>H-2)continue;
+      if(placed.some(p=>!(b[2]<p[0]||b[0]>p[2]||b[3]<p[1]||b[1]>p[3]))) continue;
+      placed.push(b);
+      const op=(0.55+0.45*(v-mn)/((mx-mn)||1)).toFixed(2);
+      out+=`<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" font-size="${fs}" font-weight="600" fill="${color}" fill-opacity="${op}"><title>${esc(w)}: ${v}</title>${esc(w)}</text>`;
+      break;}});
+  return out;}
 function s3WC(id){
   const box=document.getElementById(id), d=JSON.parse(document.getElementById(id+'-data').textContent);
   const svg=box.querySelector('svg'), set=box.querySelector('.wc-set'), num=box.querySelector('.wc-n');
-  const ctx=document.createElement('canvas').getContext('2d'), W=640, H=300;
   function draw(){
-    const s=d[set.value], ws=s.words.slice(0,+num.value);
-    const mx=Math.max(...ws.map(w=>w[1])), mn=Math.min(...ws.map(w=>w[1]));
-    const big=ws.length<=10?46:ws.length<=20?38:ws.length<=30?32:26, small=ws.length<=10?16:11;
-    const placed=[]; let out='';
-    ws.forEach(([w,v],k)=>{
-      const fs=Math.round(small+(big-small)*Math.sqrt((v-mn)/((mx-mn)||1)));
-      ctx.font=`600 ${fs}px system-ui,-apple-system,sans-serif`;
-      const tw=ctx.measureText(w).width, th=fs*0.9;
-      for(let t=0;t<2400;t++){
-        const a=0.32*t, r=1.6*a, x=W/2+r*Math.cos(a)*1.6-tw/2, y=H/2+r*Math.sin(a)*0.9;
-        const b=[x-2,y-th-2,x+tw+2,y+3];
-        if(b[0]<2||b[2]>W-2||b[1]<2||b[3]>H-2)continue;
-        if(placed.some(p=>!(b[2]<p[0]||b[0]>p[2]||b[3]<p[1]||b[1]>p[3]))) continue;
-        placed.push(b);
-        const op=(0.55+0.45*(v-mn)/((mx-mn)||1)).toFixed(2);
-        out+=`<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" font-size="${fs}" font-weight="600" fill="${s.color}" fill-opacity="${op}"><title>${w.replace(/&/g,'&amp;').replace(/</g,'&lt;')}: ${v}</title>${w.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</text>`;
-        break;}});
-    svg.innerHTML=out;}
+    const s=d[set.value], ws=s.words.slice(0,+num.value), n=ws.length;
+    svg.innerHTML=s3WCLayout(ws,s.color,640,300,n<=10?46:n<=20?38:n<=30?32:26,n<=10?16:11);}
   set.addEventListener('change',draw); num.addEventListener('change',draw); draw();
+}
+function s3WG(id){
+  const box=document.getElementById(id), d=JSON.parse(document.getElementById(id+'-data').textContent);
+  const num=box.querySelector('.wc-n');
+  function draw(){
+    const n=+num.value;
+    box.querySelectorAll('.wg-cell').forEach((cell,k)=>{
+      const s=d[k], ws=s.words.slice(0,n);
+      cell.querySelector('svg').innerHTML=s3WCLayout(ws,s.color,320,240,n<=10?30:n<=20?25:n<=30?22:18,n<=10?12:9);});}
+  num.addEventListener('change',draw); draw();
 }
 </script>
 """
+
+
+def _wordgrid(spec: Dict[str, Any]) -> str:
+    """One small word cloud per community in a grid (5 per row on wide screens)."""
+    _WC_N[0] += 1
+    wid = f"s3wg{_WC_N[0]}"
+    cells = [{"name": c["name"], "words": c["words"], "color": _col(c["color"])} for c in spec["clouds"]]
+    data = json.dumps(cells, separators=(",", ":")).replace("</", "<\\/")
+    n0 = spec.get("n", 30)
+    ns = "".join(f'<option value="{k}"{" selected" if k == n0 else ""}>{k} words</option>' for k in (10, 20, 30, 50))
+    grid = "".join(f'<figure class="wg-cell" style="--tc:{c["color"]}"><figcaption>{_e(c["name"])}</figcaption>'
+                   f'<svg class="wc-svg" viewBox="0 0 320 240" role="img" aria-label="Word cloud: {_e(c["name"])}">'
+                   f'</svg></figure>' for c in cells)
+    return (f'<figure class="wg" id="{wid}"><figcaption>{_e(spec.get("title", ""))}</figcaption>'
+            f'<div class="tv-bar"><select class="wc-n" aria-label="Words per cloud">{ns}</select></div>'
+            f'<div class="wg-grid">{grid}</div></figure>'
+            f'<script type="application/json" id="{wid}-data">{data}</script><script>s3WG("{wid}")</script>')
 
 
 def _chart(spec: Optional[Dict[str, Any]]) -> str:
     if not spec:
         return ""
     fn = {"bar": _bar, "line": _line, "heatmap": _heat, "stack": _stack, "sankey": _sankey,
-          "network": _network, "ktree": _ktree, "wordcloud": _wordcloud}.get(spec["type"])
+          "network": _network, "ktree": _ktree, "wordcloud": _wordcloud, "wordgrid": _wordgrid}.get(spec["type"])
     body = fn(spec) if fn else ""
     return f'<figure><figcaption>{_e(spec.get("title"))}</figcaption>{body}</figure>' if body else ""
 
@@ -686,6 +716,12 @@ footer{margin-top:40px;font-size:.85rem;color:var(--mut)}
 .kt-ctl button:disabled{opacity:.4;cursor:not-allowed}
 .kt-ctl input{width:4em;font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:5px;padding:1px 4px;margin-left:4px}
 .kt-ctl button:focus-visible,.net-help button:focus-visible,.net-legend button:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+.wg-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+@media (max-width:900px){.wg-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:600px){.wg-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.wg-cell{margin:0;border-top:4px solid var(--tc);border-radius:6px;background:var(--card)}
+.wg-cell figcaption{font-size:.78rem;font-weight:600;color:var(--fg);padding:4px 6px 0;line-height:1.25;min-height:2.5em}
+.wg-cell .wc-svg{border:none;background:transparent}
 .pill.lv1{background:var(--soft);color:var(--acc)}.pill.lv2{background:#efe7f7;color:#5b4a8a}.pill.lv3{background:#f8ece3;color:#9a4f1c}
 :root[data-theme="dark"] .pill.lv2{background:#2a2540;color:#c9b8f0}:root[data-theme="dark"] .pill.lv3{background:#3a2a1f;color:#f0c09a}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .pill.lv2{background:#2a2540;color:#c9b8f0}:root:not([data-theme="light"]) .pill.lv3{background:#3a2a1f;color:#f0c09a}}

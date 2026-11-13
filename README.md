@@ -269,8 +269,8 @@ pagerank(res)                        # Q37: PageRank per paper
 
 **Charts or tables.** Result sections are closed until you click them open. Tables open as bar
 charts; switch any of them to the table (and pick the column to plot), or switch all of them
-at once at the top of the report. Q6 has a word cloud per community (or the whole field):
-10 words by default, up to 50.
+at once at the top of the report. Q6 shows one word cloud per main
+community (the top 10, five per row): 30 words each by default, 10 to 50 with one menu.
 
 In Claude, use the **`s3_guided`** prompt, or ask: *"Walk me through the S3 questions for
 my Scopus file."*

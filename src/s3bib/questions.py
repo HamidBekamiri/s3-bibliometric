@@ -553,23 +553,18 @@ def q_topics(res) -> Answer:
         rows.append({"community": c, "label": res.labels.get(c, ""),
                      "top terms (c-TF-IDF)": ", ".join(t for t, _ in res.top_terms(c, 8)),
                      "top author keywords": ", ".join(k for k, _ in res.top_keywords(c, 6))})
-    t = pd.DataFrame(rows)
-    a.findings.append("Each community is described by its most distinctive title/abstract terms "
-                      "and its most frequent author keywords. Use these with Q7 to name communities.")
-    a.tables["Topic profile per community"] = t
-    sets = {}
-    kw = Counter(k.strip().lower() for v in res.papers["keywords"].dropna() for k in str(v).split(";") if k.strip())
-    if kw:
-        sets["Whole field: author keywords"] = {"words": [[k, int(n)] for k, n in kw.most_common(50)], "color": -1}
-    for c in _main_comms(res, 10):
+    a.findings.append("One word cloud per main community: word size = how distinctive the term is for that "
+                      "community (c-TF-IDF). The table below adds the most frequent author keywords.")
+    clouds = []
+    for c in _main_comms(res, res.config.top_n_communities):
         terms = res.top_terms(c, 50)
         if terms:
-            sets[_display_name(res, c) + ": distinctive terms"] = {"words": [[w, round(float(v), 3)] for w, v in terms],
-                                                                   "color": int(c)}
-    if sets:
-        a.charts.append({"type": "wordcloud", "title": "Word cloud: choose a community and how many words "
-                                                       "(size = c-TF-IDF weight, or keyword frequency for the field)",
-                         "sets": sets, "n": 10})
+            clouds.append({"name": _display_name(res, c), "color": int(c),
+                           "words": [[w, round(float(v), 3)] for w, v in terms]})
+    if clouds:
+        a.chart = {"type": "wordgrid", "title": f"What each of the {len(clouds)} main communities is about "
+                                                "(size = c-TF-IDF weight)", "clouds": clouds, "n": 30}
+    a.tables["Topic profile per community"] = pd.DataFrame(rows)
     return a
 
 
