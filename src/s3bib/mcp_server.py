@@ -49,7 +49,7 @@ mcp = _Server(
         "Typical flow: run_s3_analysis on a Scopus CSV -> enrich_citations if the user wants "
         "exact citations -> get_community for each main "
         "community and save_community_labels with short labels -> list_questions shows "
-        "the ranked research questions (Q1-Q23; Q24-Q34 prediction when asked) this dataset can answer -> "
+        "the ranked research questions (Q1-Q23 and Q35-Q37; Q24-Q34 prediction when asked) this dataset can answer -> "
         "answer_question for the ones the user cares about, in rank order -> "
         "build_report for one HTML report of all answers. Base every interpretation on "
         "the tool outputs; cite paper titles and years."
@@ -326,7 +326,8 @@ def export_networks(run_id: str, output_dir: Optional[str] = None) -> Dict[str, 
 @mcp.tool()
 def list_questions(run_id: str, include_prediction: bool = False) -> List[Dict[str, Any]]:
     """The ranked research questions of the S3 method in stages: trust the map, map the field,
-    knowledge flows, evolution, actors, interdisciplinarity (Q1-Q23). With
+    knowledge flows, evolution, actors, interdisciplinarity (Q1-Q23, plus Q35-Q37:
+    multiplex layer overlap, homophily, citation direction). With
     include_prediction=True also link prediction (Q24-Q29) and graph learning / GNNs
     (Q30-Q34); these are off by default. Shows priority and whether this dataset has the
     columns each question needs."""

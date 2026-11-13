@@ -431,3 +431,32 @@ def test_strict_citation_matching(df):
     lenient = {(a, b) for a, b in citation_edges(P) if b == len(P) - 1}
     strict = {(a, b) for a, b in citation_edges(P, strict=True) if b == len(P) - 1}
     assert (0, len(P) - 1) in lenient and (0, len(P) - 1) not in strict
+
+
+def test_layer_overlap_homophily_direction(res, tmp_path):
+    """Q35-Q37 on real data: multiplex overlap, homophily and citation direction."""
+    from s3bib.layers import assortativity, flow_direction, layers, overlap, pagerank
+    L = layers(res)
+    assert {"text", "coupling", "co-citation", "direct citation", "co-authorship"} <= set(L)
+    n = len(res.papers)
+    assert L["text"].size == res.graph().number_of_edges()  # text layer = the map's links
+    assert L["direct citation"].size == len({tuple(sorted(p)) for p in res.citation_pairs})
+    J, lift, summ = overlap(res)
+    assert np.allclose(J.values, J.values.T) and (np.diag(J.values) == 1).all()
+    assert lift.loc["direct citation", "text"] > 1  # citation ties are text links more often than chance
+    # assortativity: perfect within-group ties give r = 1, a pure cross-group pattern r < 0
+    vals = pd.Series({0: "a", 1: "a", 2: "b", 3: "b"})
+    assert assortativity(np.array([0 * 4 + 1, 2 * 4 + 3]), 4, vals)["r"] == pytest.approx(1.0)
+    assert assortativity(np.array([0 * 4 + 2, 1 * 4 + 3]), 4, vals)["r"] < 0
+    pr = pagerank(res)
+    assert pr.sum() == pytest.approx(1.0) and len(pr) == n
+    assert res.papers.at[pr.idxmax(), "title"].startswith(("Work Group Diversity", "Absorptive Capacity"))
+    comm, pairs, tot = flow_direction(res)
+    assert 0 <= tot["reciprocity"] <= 1 and tot["reciprocity"] < tot["expected"]  # citations point back in time
+    assert comm["source score"].between(-1, 1).all()
+    for qid in ("Q35", "Q36", "Q37"):
+        a = res.answer(qid)
+        assert a.findings and a.tables and a.chart, qid
+    assert [q for q in res.questions()["id"] if q in ("Q35", "Q36", "Q37")] == ["Q35", "Q37", "Q36"]  # by stage
+    html = res.report(tmp_path / "r.html").read_text()
+    assert all(f'id="{q}"' in html for q in ("Q35", "Q36", "Q37")) and "Could not compute" not in html

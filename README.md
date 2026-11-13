@@ -128,7 +128,7 @@ S3 answers its questions from three levels of network. You can export each of th
 | Level | Nodes | Ties | Questions |
 |---|---|---|---|
 | **One-mode** | papers | SIMILAR_TO (S3 ≥ threshold) | Q1–Q3, Q5–Q7, Q9, Q12–Q13, Q21–Q23 |
-| **One-mode, multiplex** | papers | SIMILAR_TO + CITES | Q4, Q8, Q10, Q11, Q24 |
+| **One-mode, multiplex** | papers | SIMILAR_TO + CITES (+ coupling, co-citation, co-authorship in Q35–Q37) | Q4, Q8, Q10, Q11, Q24, Q35–Q37 |
 | **Two-mode** | papers + authors, keywords, journals, institutions, countries, funders or references | AUTHORED_BY, HAS_KEYWORD, … | Q14–Q16, Q19, Q20; co-citation and bibliographic coupling (Q4) are projections of the paper–reference network |
 | **Knowledge graph** | all of the above + communities | all tie types + IN_COMMUNITY, LOCATED_IN | Q17, Q18 |
 
@@ -144,18 +144,18 @@ res.export_networks("networks/")      # node/edge CSVs (Neo4j, igraph) + GraphML
                                       # paper-reference network
 ```
 
-## The guided pipeline: 34 research questions
+## The guided pipeline: 37 research questions
 
 Every analysis answers one research question. Go through them in order, or jump to the
 ones you need. Questions whose data is missing from your export are skipped and say why.
 
 | Stage | Questions |
 |---|---|
-| **1. Trust the map** | Q1 Best similarity threshold (SII) · Q2 Strength of the community structure (silhouette, modularity) · Q3 Papers that don't belong · Q4 Agreement with bibliographic coupling and co-citation |
+| **1. Trust the map** | Q1 Best similarity threshold (SII) · Q2 Strength of the community structure (silhouette, modularity) · Q3 Papers that don't belong · Q4 Agreement with bibliographic coupling and co-citation · Q35 Do text, citation and co-authorship ties agree? (multiplex overlap) |
 | **2. Map the field** | Q5 Main communities · Q6 What each is about · Q7 Core papers (centrality) · Q8 Foundational papers, local vs global (Appendix Table C1) · Q9 How close communities are |
-| **3. Knowledge flows** | Q10 Citation flows, QI and MI (Tables 1–2) · Q11 Knowledge gaps (similar but not citing) · Q12 Papers that bridge communities |
+| **3. Knowledge flows** | Q10 Citation flows, QI and MI (Tables 1–2) · Q11 Knowledge gaps (similar but not citing) · Q12 Papers that bridge communities · Q37 Knowledge sources and one-way flows (PageRank, reciprocity) |
 | **4. Evolution** | Q13 Emerging, growing and declining communities · Q14 Rising and fading concepts |
-| **5. Actors** | Q15 Leading authors (RFI) · Q16 Broker authors · Q17 Collaboration gaps · Q18 Countries and institutions · Q19 Journals · Q20 Funders |
+| **5. Actors** | Q15 Leading authors (RFI) · Q16 Broker authors · Q17 Collaboration gaps · Q18 Countries and institutions · Q19 Journals · Q20 Funders · Q36 Homophily: ties within the same community, journal, country or funder |
 | **6. Interdisciplinarity** | Q21 How interdisciplinary each community is (Rao-Stirling with S3 distances) · Q22 Are interdisciplinary papers cited more? · Q23 Is the field becoming more interdisciplinary? |
 | **7. Link prediction** *(off by default)* | Q24 Which earlier papers will new papers cite? · Q25 Which knowledge gaps will close? · Q26 Which concepts will enter which communities? · Q27 Which authors will move into a new community? · Q28 Who will co-author next? · Q29 Which institutions and funders will enter which communities? |
 | **8. Graph learning (GNN)** *(off by default)* | Q30 Community of new or outlier papers (GraphSAGE) · Q31 Future impact: content or network position? (GraphSAGE regression) · Q32 Expertise search and partner matching (R-GCN on the knowledge graph) · Q33 Which communities will grow or decline next? (GCN + GRU) · Q34 Missing links in the knowledge graph (TransE, RotatE) |
@@ -198,6 +198,25 @@ result is compared with simple baselines (popularity, community size, Adamic-Ada
 paper) with 95% intervals, so the report says when a model does not beat chance. The GNNs
 (GraphSAGE, R-GCN, a temporal GCN + GRU, TransE and RotatE) are small and written in plain
 PyTorch, which sentence-transformers already installs; nothing else is needed.
+
+**Multiplex, homophily and direction (Q35–Q37).** The same papers are tied in five ways:
+text (the map's S3 links), bibliographic coupling, co-citation, direct citation and
+co-authorship.
+
+| Question | Measures | What it tells you |
+|---|---|---|
+| Q35 | Jaccard overlap between layers; lift = how many times more often a tie of one layer is also a tie of another than a random pair | Which relations the text map misses, so which map option (`map_weights`) adds the most |
+| Q36 | Attribute assortativity r (−1 to +1) per attribute and layer, with the within-group share expected by chance | Whether ties stay inside the same community, journal, country or funder, and in which layer |
+| Q37 | PageRank on in-corpus citations; per community a source score (+1 only cited, −1 only citing); reciprocity of flows between communities against random direction | Which papers and communities are knowledge sources, and whether knowledge moves one way |
+
+A paper can only cite older papers, so reciprocity is measured between communities, not papers.
+
+```python
+from s3bib.layers import layers, overlap, homophily, pagerank, flow_direction
+J, lift, summary = overlap(res)      # Q35 tables
+homophily(res)                       # Q36: attribute, layer, r
+pagerank(res)                        # Q37: PageRank per paper
+```
 
 **Charts or tables.** Result sections are closed until you click them open. Tables open as bar
 charts; switch any of them to the table (and pick the column to plot), or switch all of them

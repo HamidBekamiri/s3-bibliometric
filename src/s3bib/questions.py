@@ -1174,6 +1174,167 @@ def q_predict(res) -> Answer:
     return a
 
 
+# ===========================================================================
+# Multiplex, homophily and direction (Q35-Q37)
+# ===========================================================================
+def q_layers(res) -> Answer:
+    """Q35: overlap between the text, citation and co-authorship layers."""
+    from .layers import overlap
+    a = Answer("Q35", "")
+    J, lift, summ = overlap(res)
+    if len(J) < 2:
+        a.findings.append("Only one layer could be built (no references, citations or authors in the export).")
+        return a
+    text_kind = "the links of the text map" if not res.config.map_weights else \
+        "the same number of most similar pairs by S3 as the map has links"
+    a.findings.append(f"The same {len(res.papers)} papers are tied in {len(J)} ways: " +
+                      ", ".join(f"{r.layer} ({r.ties:,} ties)" for r in summ.itertuples()) +
+                      f". The text layer is {text_kind}.")
+    if "text" in lift.index:
+        for b in [x for x in J.columns if x != "text"]:
+            l = lift.loc[b, "text"]
+            sh = summ.set_index("layer").at[b, "share also a text link"]
+            if pd.notna(l):
+                pc = (lambda x: f"{x:.1%}" if 0 < x < 0.01 or 0.99 < x < 1 else f"{x:.0%}")
+                a.findings.append(f"{pc(sh)} of {b} ties are also text links, {l:.0f}× more than for a random "
+                                  f"pair; the other {pc(1 - sh)} are relations the text map does not show."
+                                  if l >= 10 else
+                                  f"{pc(sh)} of {b} ties are also text links, {l:.1f}× more than for a random "
+                                  f"pair; the other {pc(1 - sh)} are relations the text map does not show.")
+    off = [(J.iat[i, j], J.index[i], J.columns[j]) for i in range(len(J)) for j in range(i + 1, len(J))]
+    off.sort(reverse=True)
+    a.findings.append(f"The most similar layers are {off[0][1]} and {off[0][2]} (Jaccard = {off[0][0]:.2f}); "
+                      f"the least similar are {off[-1][1]} and {off[-1][2]} (Jaccard = {off[-1][0]:.2f}).")
+    a.findings.append("Lift = how many times more often a tie of one layer is also a tie of the other than a "
+                      "random pair is (1 = chance). Layers that rarely overlap with text add the most when "
+                      "mixed into the map (S3Config(map_weights=...)).")
+    s = summ.copy()
+    s["density"] = s["density"].map(lambda x: f"{x:.5f}")
+    s["share also a text link"] = s["share also a text link"].round(3)
+    a.tables["Layers"] = s
+    a.tables["Jaccard overlap between layers"] = J.round(3).reset_index().rename(columns={"index": "layer"})
+    a.tables["Lift over chance (rows: tie in this layer; columns: also a tie here)"] = \
+        lift.round(1).reset_index().rename(columns={"index": "layer"})
+    a.chart = {"type": "heatmap", "title": "Overlap between layers (Jaccard index of their ties)",
+               "rows": list(J.index), "cols": list(J.columns), "matrix": J.round(3).values.tolist()}
+    return a
+
+
+def q_homophily(res) -> Answer:
+    """Q36: attribute assortativity per layer."""
+    from .layers import homophily
+    a = Answer("Q36", "")
+    h = homophily(res)
+    if h.empty:
+        a.findings.append("No paper attributes (journal, country, funder) to compare.")
+        return a
+    R = h.pivot(index="attribute", columns="layer", values="r")
+    R = R[[c for c in h["layer"].unique()]]
+    a.findings.append("Assortativity r runs from -1 to +1: r > 0 means ties fall within the same group "
+                      "(same community, journal, country or funder) more often than chance; r ≈ 0 no pattern; "
+                      "r < 0 ties cross groups.")
+    few = h.pivot(index="attribute", columns="layer", values="ties") < 20
+    for att in R.index:
+        row = R.loc[att][~few.loc[att, R.columns]].dropna()
+        if row.empty:
+            continue
+        hi, lo = row.idxmax(), row.idxmin()
+        a.findings.append(f"{att.capitalize()}: strongest in {hi} (r = {row[hi]:.2f}), weakest in {lo} "
+                          f"(r = {row[lo]:.2f}).")
+    if "community" in R.index and "text" in R.columns:
+        from .hybrid import NAMES
+        mixed = [NAMES[k] for k in (res.config.map_weights or {}) if k != "s3"]
+        a.findings.append("Communities are built from the map, so community homophily in the text layer"
+                          + (f" (and in {', '.join(mixed)}, which is mixed into this map)" if mixed else "")
+                          + " is high by construction; read it in the other layers.")
+    a.findings.append("Findings leave out layers with fewer than 20 ties for an attribute; the table shows all.")
+    a.findings.append("Assortativity describes, it does not explain: shared journals or countries may cause "
+                      "the ties, or follow from them.")
+    t = h.copy()
+    t["within"], t["expected"], t["r"] = t["within"].round(3), t["expected"].round(3), t["r"].round(3)
+    t = t.rename(columns={"ties": "ties with both values", "within": "share within the same group",
+                          "expected": "expected by chance", "r": "assortativity r"})
+    a.tables["Homophily by attribute and layer"] = t
+    a.chart = {"type": "heatmap", "title": "Homophily (assortativity r) by attribute and layer",
+               "rows": list(R.index), "cols": list(R.columns),
+               "matrix": R.round(2).fillna(0).values.tolist()}
+    return a
+
+
+def q_direction(res) -> Answer:
+    """Q37: PageRank on citations and one-way vs two-way citation flows between communities."""
+    from .layers import flow_direction, pagerank
+    from scipy.stats import spearmanr
+    a = Answer("Q37", "")
+    P = res.papers
+    pr = pagerank(res)
+    indeg = pd.Series(0, index=P.index)
+    outdeg = pd.Series(0, index=P.index)
+    for i, j in res.citation_pairs:
+        indeg.iat[j] += 1
+        outdeg.iat[i] += 1
+    t = pd.DataFrame({"title": P["title"], "year": P["year"],
+                      "community": [_display_name(res, c) if pd.notna(c) else "" for c in P["community"]],
+                      "PageRank": pr, "cited in corpus (in-degree)": indeg,
+                      "cites in corpus (out-degree)": outdeg, "global citations": P["cited_by"]})
+    t = t.sort_values("PageRank", ascending=False)
+    t["rank by PageRank"] = range(1, len(t) + 1)
+    t["rank by in-degree"] = t["cited in corpus (in-degree)"].rank(ascending=False, method="min").astype(int)
+    cited = t[t["cited in corpus (in-degree)"] > 0]
+    a.findings.append("Citations have a direction: a paper can only cite older papers, so paper-level "
+                      "reciprocity is always zero. In-degree = times cited inside the corpus; PageRank also "
+                      "counts who cites: being cited by well-cited papers counts more.")
+    top = t.iloc[0]
+    a.findings.append(f"Highest PageRank: “{top['title']}” ({_int(top['year'])}), cited "
+                      f"{int(top['cited in corpus (in-degree)'])} times in the corpus.")
+    if len(cited) >= 5:
+        rho = spearmanr(cited["PageRank"], cited["cited in corpus (in-degree)"]).correlation
+        a.findings.append(f"PageRank and in-degree agree at Spearman ρ = {rho:.2f} over the {len(cited)} cited papers.")
+        jump = cited.head(50)
+        jump = jump[jump["rank by in-degree"] - jump["rank by PageRank"] >= 10]
+        if len(jump):
+            j = jump.iloc[0]
+            a.findings.append(f"Ranked much higher by PageRank than by counts: “{j['title']}” "
+                              f"(#{j['rank by PageRank']} vs #{j['rank by in-degree']}): few citations, "
+                              "but from central papers.")
+    show = t.head(25).copy()
+    show["PageRank"] = show["PageRank"].round(5)
+    a.tables["Papers by PageRank on in-corpus citations"] = show
+    comm, pairs, tot = flow_direction(res)
+    if not comm.empty and tot["flows"]:
+        a.findings.append(f"Between communities, {int(tot['flows'])} citations flow; reciprocity = "
+                          f"{tot['reciprocity']:.2f} (1 = every flow returned in full, 0 = all one-way), against "
+                          f"{tot['expected']:.2f} if each citation went either way at random. "
+                          + ("Flows are more one-way than chance: knowledge moves in a hierarchy."
+                             if tot["reciprocity"] < tot["expected"] - 0.02 else
+                             "Flows are about as two-way as chance."))
+        c = comm.dropna(subset=["source score"]).sort_values("source score", ascending=False)
+        if len(c):
+            s, b = c.iloc[0], c.iloc[-1]
+            a.findings.append(f"Main knowledge source: {_name(res, s.community)} (source score "
+                              f"{s['source score']:+.2f}, median year {_int(s['median year'])}); most dependent on "
+                              f"others: {_name(res, b.community)} ({b['source score']:+.2f}, median year "
+                              f"{_int(b['median year'])}). Older communities tend to be sources because "
+                              "citations point back in time.")
+        comm = comm.assign(community=[_name(res, x) for x in comm["community"]])
+        comm["source score"] = comm["source score"].round(3)
+        a.tables["Knowledge sources and users (source score +1 = only cited, -1 = only citing)"] = comm
+        if not pairs.empty:
+            pairs = pairs.sort_values(["total", "asymmetry"], ascending=False)
+            pairs["A"] = [_name(res, x) for x in pairs["A"]]
+            pairs["B"] = [_name(res, x) for x in pairs["B"]]
+            pairs["asymmetry"] = pairs["asymmetry"].round(3)
+            a.tables["Direction of flows between community pairs"] = pairs.head(40)
+        cc = c.assign(name=[_display_name(res, x) for x in c["community"]])
+        a.chart = {"type": "bar", "title": "Knowledge source score per community "
+                                           "(+1 = only cited by other communities, -1 = only citing them)",
+                   "labels": cc["name"].tolist(), "values": cc["source score"].round(3).tolist(), "max": 30}
+    a.charts.append({"type": "bar", "title": "Top papers by PageRank on in-corpus citations",
+                     "labels": [_clip(x, 60) for x in show["title"]],
+                     "values": show["PageRank"].tolist(), "max": 15})
+    return a
+
+
 def _pq(fn: str, res) -> Answer:
     from . import predq
     return getattr(predq, fn)(res)
@@ -1192,6 +1353,10 @@ QUESTIONS: List[Question] = [
              "Validates S3 against bibliographic coupling and co-citation.",
              "Pearson correlation, top-10 neighbour overlap, NMI/ARI vs BC communities",
              ("references",), q_validation),
+    Question("Q35", 1, "Recommended", "Do text, citation and co-authorship ties agree?",
+             "Shows what each map option adds: relations the text map misses.",
+             "Multiplex layers (text, coupling, co-citation, direct citation, co-authorship): "
+             "Jaccard overlap and lift over chance", (), q_layers),
     Question("Q5", 2, "Essential", "What are the main research communities?",
              "The core result: the intellectual structure of the field.",
              "Leiden (directed modularity) on the time-ordered S3 graph", (), q_communities),
@@ -1213,6 +1378,10 @@ QUESTIONS: List[Question] = [
              "Semantic similarity vs citations per community pair (RQ4)", ("citations",), q_gaps),
     Question("Q12", 3, "Recommended", "Which papers bridge communities?",
              "Finds boundary-spanning work.", "Participation coefficient of S3 links", (), q_bridges),
+    Question("Q37", 3, "Recommended", "Which papers and communities are knowledge sources, and are flows one-way?",
+             "Direction reveals hierarchy: who builds on whom.",
+             "PageRank on in-corpus citations; source score and reciprocity of community flows vs chance",
+             ("citations",), q_direction),
     Question("Q13", 4, "Essential", "Which communities are emerging, growing or declining?",
              "Shows where the field is heading.", "Papers per year, momentum vs field", ("years",), q_growth),
     Question("Q14", 4, "Recommended", "Which concepts are rising or fading, and how far have they spread?",
@@ -1236,6 +1405,9 @@ QUESTIONS: List[Question] = [
              "Journals per community, Shannon diversity (RQ11)", ("source",), q_journals),
     Question("Q20", 5, "Optional", "Who funds which communities?",
              "Shows funding priorities.", "Funding agencies per community (RQ10)", ("funding",), q_funding),
+    Question("Q36", 5, "Recommended", "Do papers link within their own community, journal, country or funder?",
+             "Homophily: whether ties stay inside groups, and in which layers.",
+             "Attribute assortativity r per layer, with the share expected by chance", (), q_homophily),
     Question("Q21", 6, "Recommended", "How interdisciplinary is each community?",
              "Measures integration across topics with S3 instead of subject categories.",
              "Rao-Stirling diversity of S3 links, disparity = 1 - mean S3", (), q_integration),
