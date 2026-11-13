@@ -511,6 +511,9 @@ def _chart_columns(d: pd.DataFrame):
     if not num or not txt:
         return None
     label = txt[0]
+    # repeated labels (e.g. one row per attribute and layer): combine with the next text column
+    if d[label].duplicated().any() and len(txt) > 1:
+        label = (txt[0], txt[1])
     plot = [c for c in num if not any(k in str(c).lower() for k in _SKIP_COLS)]
     return (label, plot) if plot else None  # only ids or years: a table reads better
 
@@ -549,7 +552,12 @@ def _table(name: str, df: pd.DataFrame, max_rows: int = 20) -> str:
 
     def num(v):
         return None if pd.isna(v) or not math.isfinite(float(v)) else float(v)
-    data = {"labels": [lab(k, v) for k, v in enumerate(d[label].tolist())], "label": str(label),
+    if isinstance(label, tuple):
+        labels = [f"{lab(k, v)} · {w}" for k, (v, w) in enumerate(zip(d[label[0]].tolist(), d[label[1]].tolist()))]
+        label = f"{label[0]} · {label[1]}"
+    else:
+        labels = [lab(k, v) for k, v in enumerate(d[label].tolist())]
+    data = {"labels": labels, "label": str(label),
             "cols": {str(c): [num(v) for v in d[c].tolist()] for c in cols}}
     js = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
     opts = "".join(f'<option value="{_e(c)}">{_e(c)}</option>' for c in cols)
@@ -678,62 +686,120 @@ footer{margin-top:40px;font-size:.85rem;color:var(--mut)}
 .kt-ctl button:disabled{opacity:.4;cursor:not-allowed}
 .kt-ctl input{width:4em;font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:5px;padding:1px 4px;margin-left:4px}
 .kt-ctl button:focus-visible,.net-help button:focus-visible,.net-legend button:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+.pill.lv1{background:var(--soft);color:var(--acc)}.pill.lv2{background:#efe7f7;color:#5b4a8a}.pill.lv3{background:#f8ece3;color:#9a4f1c}
+:root[data-theme="dark"] .pill.lv2{background:#2a2540;color:#c9b8f0}:root[data-theme="dark"] .pill.lv3{background:#3a2a1f;color:#f0c09a}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .pill.lv2{background:#2a2540;color:#c9b8f0}:root:not([data-theme="light"]) .pill.lv3{background:#3a2a1f;color:#f0c09a}}
+.lvline{margin:4px 0 0;font-size:.95rem}
+.warn{border-left:4px solid #c2672c;background:var(--card);padding:8px 12px;border-radius:6px;font-size:.9rem}
+.note{margin:0;font-size:.9rem;background:var(--soft);border-radius:6px;padding:6px 10px}
+.brief{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin:12px 0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.card h3{margin:0 0 8px;font-size:1rem}.card ol,.card ul{margin:0;padding-left:20px}.card li{margin:4px 0;font-size:.9rem}
+.stats{display:flex;gap:18px;flex-wrap:wrap}.stat b{display:block;font-size:1.5rem;color:var(--acc);font-variant-numeric:tabular-nums}.stat span{font-size:.8rem;color:var(--mut)}
+details.theme{border-left:5px solid var(--tc,var(--acc));padding:8px 14px}
+details.theme>summary{font-size:1rem}details.theme>summary .mut{font-weight:400}
+.theme-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px 22px;margin:8px 0}
+.theme-grid h4{margin:6px 0 4px;font-size:.85rem;text-transform:uppercase;letter-spacing:.04em;color:var(--mut)}
+.theme-grid ul{margin:0;padding-left:18px}.theme-grid li{font-size:.88rem;margin:3px 0}
+.dl{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.dl a{font-size:.85rem;border:1px solid var(--line);border-radius:6px;padding:4px 10px;color:var(--fg);text-decoration:none;background:var(--card)}
+.dl a:hover{border-color:var(--acc);color:var(--acc)}
+.toc{display:flex;flex-wrap:wrap;gap:6px 16px;margin:14px 0;font-size:.92rem}.toc a{color:var(--acc);text-decoration:none}
+.intro{color:var(--mut);margin:0 0 8px}
+.methods{white-space:pre-wrap;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-size:.9rem}
+dl.gloss{display:grid;grid-template-columns:max-content 1fr;gap:4px 14px;font-size:.9rem}dl.gloss dt{font-weight:600}dl.gloss dd{margin:0}
+@media (max-width:640px){dl.gloss{grid-template-columns:1fr}}
 """
 
 
-def build_report(res, path: Union[str, Path], title: Optional[str] = None,
-                 qids: Optional[List[str]] = None, prediction: Optional[bool] = None) -> Path:
-    from .questions import prediction_on
-    show_pred = prediction_on(res, prediction)
-    path = Path(path).expanduser()
-    title = title or "S3 analysis of the field"
+def q_head(q, note: Optional[str] = None) -> str:
+    """Header of a question section: id, question, level and source tags, why and method."""
+    src = ("S3 paper" if q.published else "extension") if q.level == 1 else \
+        ("two-mode / KG" if q.level == 2 else "prediction")
+    return (f'<div class="qh"><span class="id">{q.qid}</span><h3>{_e(q.text)}</h3>'
+            f'<span class="pill">{q.priority}</span><span class="pill lv lv{q.level}" '
+            f'title="Level {q.level}">L{q.level} · {_e(src)}</span></div>'
+            f'<div class="meta">{_e(q.why)} · Method: {_e(q.method)}</div>'
+            + (f'<p class="note"><b>For your review:</b> {_e(note)}</p>' if note else ""))
+
+
+def q_section(res, q, show_pred: bool, a=None, note: Optional[str] = None) -> str:
+    """One question as an HTML section (answer computed unless given)."""
+    head = q_head(q, note)
+    ok, why = available(res, q)
+    if not ok:
+        return f'<section class="q na" id="{q.qid}">{head}<p class="mut">Not available: {_e(why)}</p></section>'
+    if a is None:
+        try:
+            a = answer(res, q.qid, prediction=show_pred or None)
+        except Exception as ex:  # keep the report going
+            a = ex
+    if isinstance(a, Exception):
+        return f'<section class="q na" id="{q.qid}">{head}<p class="mut">Could not compute: {_e(a)}</p></section>'
+    findings = "".join(f"<li>{_e(f)}</li>" for f in a.findings)
+    tables = "".join(_table(k, v) for k, v in a.tables.items())
+    return (f'<section class="q" id="{q.qid}">{head}<ul class="f">{findings}</ul>'
+            f'{_chart(a.chart)}{"".join(_chart(c) for c in a.charts)}{tables}</section>')
+
+
+def page(title: str, header: str, body: str) -> str:
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>{_e(title)}</title><style>{CSS}</style>
+<script src="{FORCE_GRAPH_CDN}"></script></head>
+<body>{NET_JS}{FG_JS}{KT_JS}{TV_JS}{WC_JS}<div class="wrap">
+<h1>{_e(title)}</h1>
+{header}
+<div class="tv-global">Show results as <button type="button" data-v="chart" onclick="s3TVAll('chart')">Charts</button><button type="button" data-v="table" onclick="s3TVAll('table')">Tables</button></div>
+<script>document.querySelectorAll('.tv-global button').forEach(x=>x.classList.toggle('on',x.dataset.v===s3TVPref()));</script>
+{body}
+<footer>S3 (Semantic Similarity Score) bibliometric method · github.com/HamidBekamiri/s3-bibliometric</footer>
+</div></body></html>"""
+
+
+def meta_line(res, level: int) -> str:
+    from .hybrid import map_label
+    from .questions import LEVELS
     n = len(res.papers)
     yr = res.papers["year"].dropna()
     span = f"{int(yr.min())}–{int(yr.max())}" if len(yr) else "n/a"
+    thr = f"{res.best['threshold']:.2f}" if res.best else "n/a"
+    warn = ""
+    if res.config.map_weights:
+        warn = (f'<p class="warn">This map mixes citation relations into the text map '
+                f'({_e(map_label(res.config.map_weights))}). That is an extension (level 2), so even the '
+                f'sections marked “S3 paper” are not the published method here. Use the text map '
+                f'(the default) to report the published S3 method.</p>')
+    return (f'<p class="mut">{n} papers · {span} · map: {_e(map_label(res.config.map_weights))} · best threshold {thr} · '
+            f'{int(res.papers["community"].notna().sum())} clustered papers in {len(res.communities())} communities · '
+            f'generated {date.today()} with s3-bibliometric</p>'
+            f'<p class="lvline"><span class="pill lv lv{level}">Level {level}</span> {_e(LEVELS[level])}'
+            + (" · includes " + " and ".join(f"level {k}" for k in range(1, level)) if level > 1 else "")
+            + "</p>" + warn)
+
+
+def build_report(res, path: Union[str, Path], title: Optional[str] = None,
+                 qids: Optional[List[str]] = None, prediction: Optional[bool] = None,
+                 level: Optional[int] = None) -> Path:
+    """The 'questions' layout: every question up to the level, grouped by stage."""
+    from .questions import included, report_level
+    lv = report_level(res, level, prediction)
+    show_pred = lv >= 3
+    path = Path(path).expanduser()
+    title = title or "S3 analysis of the field"
     nav, body = [], []
     stage_open = None
     for q in QUESTIONS:
         if qids and q.qid not in qids:
             continue
-        if q.prediction and not show_pred and not qids:
+        if not qids and not included(q, lv):
             continue
         if q.stage != stage_open:
             stage_open = q.stage
             body.append(f'<h2 id="s{q.stage}">{q.stage}. {_e(STAGES[q.stage])}</h2>')
-        ok, why = available(res, q)
         nav.append(f'<a href="#{q.qid}"><b>{q.qid}</b>{_e(q.text)}</a>')
-        head = (f'<div class="qh"><span class="id">{q.qid}</span><h3>{_e(q.text)}</h3>'
-                f'<span class="pill">{q.priority}</span></div>'
-                f'<div class="meta">{_e(q.why)} · Method: {_e(q.method)}</div>')
-        if not ok:
-            body.append(f'<section class="q na" id="{q.qid}">{head}<p class="mut">Not available: {_e(why)}</p></section>')
-            continue
-        try:
-            a = answer(res, q.qid, prediction=show_pred or None)
-        except Exception as ex:  # keep the report going
-            body.append(f'<section class="q na" id="{q.qid}">{head}<p class="mut">Could not compute: {_e(ex)}</p></section>')
-            continue
-        findings = "".join(f"<li>{_e(f)}</li>" for f in a.findings)
-        tables = "".join(_table(k, v) for k, v in a.tables.items())
-        body.append(f'<section class="q" id="{q.qid}">{head}<ul class="f">{findings}</ul>'
-                    f'{_chart(a.chart)}{"".join(_chart(c) for c in a.charts)}{tables}</section>')
-    thr = f"{res.best['threshold']:.2f}" if res.best else "n/a"
-    from .hybrid import map_label
+        body.append(q_section(res, q, show_pred))
     planned = "".join(f"<li>{_e(p)} <span class='mut'>({_e(s)})</span></li>" for p, s in PLANNED)
-    doc = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>{_e(title)}</title><style>{CSS}</style>
-<script src="{FORCE_GRAPH_CDN}"></script></head>
-<body>{NET_JS}{FG_JS}{KT_JS}{TV_JS}{WC_JS}<div class="wrap">
-<h1>{_e(title)}</h1>
-<p class="mut">{n} papers · {span} · map: {_e(map_label(res.config.map_weights))} · best threshold {thr} ·
-{int(res.papers['community'].notna().sum())} clustered papers in {len(res.communities())} communities · generated {date.today()} with s3-bibliometric</p>
-<div class="tv-global">Show results as <button type="button" data-v="chart" onclick="s3TVAll('chart')">Charts</button><button type="button" data-v="table" onclick="s3TVAll('table')">Tables</button></div>
-<script>document.querySelectorAll('.tv-global button').forEach(x=>x.classList.toggle('on',x.dataset.v===s3TVPref()));</script>
-<nav>{''.join(nav)}</nav>
-{''.join(body)}
-<h2>Planned analyses</h2><ul>{planned}</ul>
-<footer>S3 (Semantic Similarity Score) bibliometric method · github.com/HamidBekamiri/s3-bibliometric</footer>
-</div></body></html>"""
+    doc = page(title, meta_line(res, lv), f"<nav>{''.join(nav)}</nav>{''.join(body)}"
+                                           f"<h2>Planned analyses</h2><ul>{planned}</ul>")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(doc, encoding="utf-8")
     return path

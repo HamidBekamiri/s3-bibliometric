@@ -330,14 +330,16 @@ def export_networks(run_id: str, output_dir: Optional[str] = None) -> Dict[str, 
 
 
 @mcp.tool()
-def list_questions(run_id: str, include_prediction: bool = False) -> List[Dict[str, Any]]:
-    """The ranked research questions of the S3 method in stages: trust the map, map the field,
-    knowledge flows, evolution, actors, interdisciplinarity (Q1-Q23, plus Q35-Q37:
-    multiplex layer overlap, homophily, citation direction). With
-    include_prediction=True also link prediction (Q24-Q29) and graph learning / GNNs
-    (Q30-Q34); these are off by default. Shows priority and whether this dataset has the
-    columns each question needs."""
-    t = _get(run_id).questions(prediction=include_prediction)
+def list_questions(run_id: str, include_prediction: bool = False, level: int = 2) -> List[Dict[str, Any]]:
+    """The ranked research questions of the S3 method, in three levels:
+    level 1 = the published S3 method (text similarity map; each question says whether it is
+    in the S3 paper or an extension), level 2 (default) = + two-mode networks and knowledge
+    graph (authors, institutions, journals, funders, layer overlap, homophily, citation
+    direction), level 3 = + prediction (link prediction Q24-Q29, GNNs Q30-Q34; only when the
+    user asks; include_prediction=True is the same as level 3). Shows priority and whether
+    this dataset has the columns each question needs."""
+    t = _get(run_id).questions(prediction=True if include_prediction else None,
+                               level=3 if include_prediction else level)
     return json.loads(t.to_json(orient="records"))
 
 
@@ -353,12 +355,18 @@ def answer_question(run_id: str, question_id: str, max_rows: int = 20,
 
 @mcp.tool()
 def build_report(run_id: str, output_path: Optional[str] = None,
-                 title: Optional[str] = None, prediction: bool = False) -> Dict[str, str]:
-    """Answer every available question and write one self-contained HTML report
-    (findings, charts and tables per question). prediction=True adds link prediction and
-    GNN questions (Q24-Q34; a few minutes more). Default path: the run folder."""
+                 title: Optional[str] = None, prediction: bool = False, level: int = 2,
+                 layout: str = "review") -> Dict[str, str]:
+    """Write one self-contained HTML report. layout="review" (default) is organised for a
+    literature review: a one-page brief, scope (records in and out), one card per theme
+    (what it is about, papers to read first, growth, links to other themes), how themes
+    connect, evolution, research agenda (gaps) and a methods appendix, with RIS/BibTeX reading
+    lists and a methods paragraph to download. layout="questions" lists every question.
+    level: 1 = the published S3 method, 2 = + two-mode and knowledge graph (default),
+    3 = + prediction (prediction=True is the same; a few minutes more). Default path: the run folder."""
     res = _get(run_id)
-    p = res.report(output_path or (_run_dir(run_id) / "s3_report.html"), title, prediction=prediction)
+    p = res.report(output_path or (_run_dir(run_id) / "s3_report.html"), title,
+                   prediction=True if prediction else None, level=3 if prediction else level, layout=layout)
     return {"report": str(p)}
 
 

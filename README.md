@@ -144,35 +144,61 @@ res.export_networks("networks/")      # node/edge CSVs (Neo4j, igraph) + GraphML
                                       # paper-reference network
 ```
 
-## The guided pipeline: 37 research questions
+## Three levels of analysis
 
-Every analysis answers one research question. Go through them in order, or jump to the
-ones you need. Questions whose data is missing from your export are skipped and say why.
+| Level | What it adds | Questions |
+|---|---|---|
+| **1. S3** — the published method | The text-similarity map and what the S3 paper reports from it. Questions marked *S3 paper* are in the paper; *extension* questions use the same map. | **S3 paper:** Q1 threshold (SII) · Q2 structure quality · Q3 outliers · Q38 evaluation against coupling, BERTopic and random clusters (paper Tables 5–7) · Q5 communities · Q6 topics · Q7 core papers · Q8 local vs global foundations · Q10 citation flows, QI, MI (Tables 1–2). **Extensions:** Q9 closeness · Q11 knowledge gaps · Q12 bridges · Q13 growth · Q14 concepts · Q21–Q23 interdisciplinarity |
+| **2. Two-mode networks and knowledge graph** (default) | Authors, institutions, countries, journals, funders and references; the map options that mix in citation relations | Q4 agreement with coupling and co-citation · Q15–Q20 actors · Q35 layer overlap and projection check · Q36 homophily · Q37 citation direction |
+| **3. Prediction** (off unless asked) | Link prediction and graph neural networks | Q24–Q34 |
 
-| Stage | Questions |
-|---|---|
-| **1. Trust the map** | Q1 Best similarity threshold (SII) · Q2 Strength of the community structure (silhouette, modularity) · Q3 Papers that don't belong · Q4 Agreement with bibliographic coupling and co-citation · Q35 Do text, citation and co-authorship ties agree? (multiplex overlap) |
-| **2. Map the field** | Q5 Main communities · Q6 What each is about · Q7 Core papers (centrality) · Q8 Foundational papers, local vs global (Appendix Table C1) · Q9 How close communities are |
-| **3. Knowledge flows** | Q10 Citation flows, QI and MI (Tables 1–2) · Q11 Knowledge gaps (similar but not citing) · Q12 Papers that bridge communities · Q37 Knowledge sources and one-way flows (PageRank, reciprocity) |
-| **4. Evolution** | Q13 Emerging, growing and declining communities · Q14 Rising and fading concepts |
-| **5. Actors** | Q15 Leading authors (RFI) · Q16 Broker authors · Q17 Collaboration gaps · Q18 Countries and institutions · Q19 Journals · Q20 Funders · Q36 Homophily: ties within the same community, journal, country or funder |
-| **6. Interdisciplinarity** | Q21 How interdisciplinary each community is (Rao-Stirling with S3 distances) · Q22 Are interdisciplinary papers cited more? · Q23 Is the field becoming more interdisciplinary? |
-| **7. Link prediction** *(off by default)* | Q24 Which earlier papers will new papers cite? · Q25 Which knowledge gaps will close? · Q26 Which concepts will enter which communities? · Q27 Which authors will move into a new community? · Q28 Who will co-author next? · Q29 Which institutions and funders will enter which communities? |
-| **8. Graph learning (GNN)** *(off by default)* | Q30 Community of new or outlier papers (GraphSAGE) · Q31 Future impact: content or network position? (GraphSAGE regression) · Q32 Expertise search and partner matching (R-GCN on the knowledge graph) · Q33 Which communities will grow or decline next? (GCN + GRU) · Q34 Missing links in the knowledge graph (TransE, RotatE) |
+Each level includes the ones below it. Choose it for a run or per call:
 
 ```python
-res.questions()              # the ranked list, and which ones your data supports
-res.answer("Q8")             # findings + tables for one question
-res.report("report.html")    # every answer in one HTML report with charts
+res = s3bib.run_s3("scopus.csv", s3bib.S3Config(level=1))   # only the published method
+res.questions(level=2)                                     # the ranked list, and which ones your data supports
+res.answer("Q8")                                           # findings + tables for one question
+res.report("report.html", level=1)                         # the report at one level
 ```
-
-From the command line:
 
 ```bash
-s3bib report scopus.csv -o report.html
+s3bib report scopus.csv -o report.html --level 1
+s3bib questions --level 1
 ```
 
-**Prediction (stages 7–8) is off by default** (`S3Config(prediction=False)`). Until you
+Q38 compares the methods as in the paper: the Topic Coherence Index (TCI = 1 − Jensen–Shannon
+divergence between each paper's TF-IDF words and its community's), the silhouette on the SBERT
+embeddings for every method, and QI. BERTopic is included when installed
+(`pip install "s3-bibliometric[bertopic]"`). Absolute values depend on text cleaning, so compare
+the methods within one run rather than with the numbers printed in the paper.
+
+## The report: organised for a literature review
+
+`res.report("report.html")` writes one self-contained HTML page in the order a review is written:
+
+1. **The field at a glance** — the numbers, the themes, one paper per theme to read first, the
+   foundations the field builds on, where it is going, the gaps to discuss (and leading authors at level 2).
+2. **Scope** — records in and out (PRISMA-style counts) and papers that do not belong.
+3. **Themes** — one card per theme: terms and keywords, papers to read first, foundations,
+   growth, which themes it builds on and is used by, the closest themes in content, and at
+   level 2 its authors, countries, journals and funders. Each card is one subsection of your review.
+4. **How themes connect**, **Evolution**, **Who does the work** (level 2).
+5. **Research agenda** — knowledge gaps, emerging themes, collaboration gaps (level 2) and
+   forecasts (level 3), for your discussion and future-research sections.
+6. **Methods appendix** — a methods paragraph to adapt (with the references), a glossary, and the
+   analyses that show the map can be trusted.
+
+Every result carries a *For your review* note and a tag: **L1 · S3 paper**, **L1 · extension**,
+**L2** or **L3**. When the map mixes in citation relations, the report says that even the
+level-1 results are no longer the published method. Downloads for writing:
+
+```python
+res.export_review("review/")   # reading_list.ris (Zotero, EndNote, Mendeley), reading_list.bib,
+                               # themes.csv, prisma.csv, methods.txt
+res.report("report.html", layout="questions")   # the previous layout: every question in order
+```
+
+**Prediction (level 3, stages 7–8) is off by default** (`S3Config(prediction=False)`, `level=2`). Until you
 switch it on, Q24–Q34 do not appear in the question list, the report, the CLI or Claude, and
 asking for one returns a note that prediction is off. Switch it on for a whole run, or for
 one call:
@@ -339,8 +365,11 @@ capacity and work group diversity, with their real all-mpnet-base-v2 embeddings,
 
 ## Citation
 
-If you use this package, please cite the S3 paper: *Semantic Similarity Score: A New
-Bibliometric Method for Mapping Intellectual Structures in Business Research.*
+If you use this package, please cite the S3 paper:
+
+Bekamiri, H., Østergaard, C. R., & Timmermans, B. (2027). Semantic similarity score: A new method
+for mapping intellectual structures in business research. *Journal of Business Research*, 219,
+116582. https://doi.org/10.1016/j.jbusres.2026.116582
 
 ## License
 

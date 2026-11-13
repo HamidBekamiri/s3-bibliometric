@@ -65,17 +65,27 @@ def main(argv=None) -> None:
                    help="Keep only significant coupling, co-citation and co-authorship ties (in the map "
                         "and in Q35-Q37): sharing one popular reference or author is not enough")
     r.add_argument("--prediction", action="store_true",
-                   help="Add link prediction and GNN questions (Q24-Q34) to the report")
+                   help="Add link prediction and GNN questions (Q24-Q34) to the report (same as --level 3)")
+    r.add_argument("--level", type=int, choices=(1, 2, 3), default=2,
+                   help="1 = the published S3 method; 2 = + two-mode networks and knowledge graph "
+                        "(default); 3 = + prediction")
+    r.add_argument("--layout", choices=("review", "questions"), default="review",
+                   help="review (default): brief, theme cards, research agenda, methods appendix; "
+                        "questions: every question in order")
     r.add_argument("--save", help="Also save the run to this folder (reload with S3Result.load)")
     qp = sub.add_parser("questions", help="List the ranked research questions")
     qp.add_argument("--prediction", action="store_true", help="Also list the prediction questions (Q24-Q34)")
+    qp.add_argument("--level", type=int, choices=(1, 2, 3), default=2,
+                    help="1 = the published S3 method; 2 = + two-mode and knowledge graph; 3 = + prediction")
     sub.add_parser("models", help="List the embedding models you can choose")
     a = p.parse_args(argv)
 
     if a.cmd == "questions":
-        from .questions import QUESTIONS, STAGES
-        for k, q in enumerate([q for q in QUESTIONS if a.prediction or not q.prediction], 1):
-            print(f"{k:>2}. {q.qid:<4} [{STAGES[q.stage]} · {q.priority}] {q.text}")
+        from .questions import LEVELS, QUESTIONS, STAGES
+        lv = 3 if a.prediction else a.level
+        print(f"Level {lv}: {LEVELS[lv]}")
+        for k, q in enumerate([q for q in QUESTIONS if q.level <= lv], 1):
+            print(f"{k:>2}. {q.qid:<4} [L{q.level} {q.source} · {STAGES[q.stage]} · {q.priority}] {q.text}")
         return
     if a.cmd == "models":
         from .models import model_table
@@ -96,7 +106,8 @@ def main(argv=None) -> None:
     cfg = S3Config(model_name=model, start_year=a.start_year, end_year=a.end_year, threshold=a.threshold,
                    community_method=a.method, dedupe=not a.no_dedupe, seed=a.seed,
                    map_weights=a.map, citation_match="strict" if a.strict_citations else "lenient",
-                   prediction=a.prediction, backbone=a.backbone)
+                   prediction=a.prediction or a.level == 3, backbone=a.backbone,
+                   level=3 if a.prediction else a.level)
     bar = lambda s, x: print(f"\r{x:4.0%}  {s:<50}", end="", file=sys.stderr)
     res = run_s3(a.csv, cfg, progress=bar)
     print(file=sys.stderr)
@@ -111,7 +122,8 @@ def main(argv=None) -> None:
               file=sys.stderr)
     if a.save:
         res.save(a.save)
-    out = res.report(a.output, a.title, prediction=a.prediction)
+    out = res.report(a.output, a.title, prediction=True if a.prediction else None,
+                     level=3 if a.prediction else a.level, layout=a.layout)
     print(f"Report written to {out}")
 
 

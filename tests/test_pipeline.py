@@ -489,3 +489,64 @@ def test_projection_backbone_and_four_cycles(res, df, tmp_path):
     a = r.answer("Q35")
     assert "Projection check: significant ties and four-cycle clustering" in a.tables
     assert any("significant ties here" in f for f in a.findings)
+
+
+def test_levels(res):
+    """Level 1 = the S3 paper (+ extensions on the same map), 2 = + two-mode/KG, 3 = + prediction."""
+    from s3bib.questions import LEVEL2, PUBLISHED, QUESTIONS
+    l1, l2, l3 = (set(res.questions(level=k)["id"]) for k in (1, 2, 3))
+    assert l1 < l2 < l3 and l3 == {q.qid for q in QUESTIONS}
+    assert not (l1 & LEVEL2) and LEVEL2 <= l2 and PUBLISHED <= l1
+    assert all(q.prediction == (q.level == 3) for q in QUESTIONS)
+    assert set(res.questions()["id"]) == l2  # default level 2: prediction stays off
+    t = res.questions(level=1).set_index("id")
+    assert t.at["Q10", "source"] == "S3 paper" and t.at["Q11", "source"] == "extension"
+    with pytest.raises(ValueError):
+        s3bib.S3Config(level=4)
+
+
+def test_paper_evaluation(res):
+    """Q38 reproduces the S3 paper's Tables 5-7 on real data: S3 vs coupling vs random."""
+    from s3bib.evaluate import evaluate, tci
+    t = evaluate(res, bertopic=False)["table"].set_index("method")
+    s3 = t.loc["S3"]
+    assert "Bibliographic coupling" in t.index
+    # better than random clusters of the same sizes
+    assert s3["TCI gain over random"] > 0 and s3["silhouette"] > s3["silhouette random (same sizes)"]
+    assert s3["QI (top communities)"] > s3["QI random (same sizes)"]
+    assert 0 < s3["TCI"] <= 1 and s3["silhouette"] == pytest.approx(res.best["silhouette"], abs=0.05)
+    import scipy.sparse as sp
+    same = sp.csr_matrix(np.array([[.5, .5, 0], [.5, .5, 0], [.5, .5, 0]]))
+    assert tci(same, np.array([0, 0, 0])) == pytest.approx(1.0)  # identical papers: perfect coherence
+    a = res.answer("Q38")
+    assert a.tables and a.chart and any("TCI" in f for f in a.findings)
+
+
+def test_review_report_and_exports(res, tmp_path):
+    """The literature-review layout: brief, theme cards, every question of the level once, downloads."""
+    from s3bib.questions import QUESTIONS
+    from s3bib.review import SECTIONS
+    placed = [q for _, _, _, qs in SECTIONS for q in qs]
+    assert sorted(placed) == sorted(q.qid for q in QUESTIONS) and len(placed) == len(set(placed))
+    for lv in (1, 2):
+        html = res.report(tmp_path / f"r{lv}.html", level=lv).read_text()
+        ids = {q.qid for q in QUESTIONS if q.level <= lv}
+        assert all(f'id="{q}"' in html for q in ids)
+        assert not any(f'id="{q.qid}"' in html for q in QUESTIONS if q.level > lv)
+        assert 'id="brief"' in html and html.count('class="theme"') == len(res.communities().head(10))
+        assert "Could not compute" not in html and "For your review" in html
+        assert 'download="reading_list.ris"' in html and "Methods paragraph" in html
+    assert "Who works on it" in html  # level 2 adds actors to the theme cards
+    old = res.report(tmp_path / "q.html", layout="questions").read_text()
+    assert 'id="brief"' not in old and 'id="Q1"' in old
+    files = res.export_review(tmp_path / "exp")
+    ris = files["reading_list.ris"].read_text()
+    assert ris.count("TY  - JOUR") == ris.count("ER  - ") > 0 and "S3 theme:" in ris
+    bib = files["reading_list.bib"].read_text()
+    assert bib.count("@article{") == ris.count("TY  - JOUR")
+    keys = [l.split("{", 1)[1].rstrip(",") for l in bib.splitlines() if l.startswith("@article{")]
+    assert len(keys) == len(set(keys))  # unique citation keys
+    m = files["methods.txt"].read_text()
+    assert "Bekamiri" in m and f"{res.best['threshold']:.2f}" in m
+    pr = pd.read_csv(files["prisma.csv"])
+    assert pr.iloc[0]["papers"] == len(res.papers) + len(res.removed)

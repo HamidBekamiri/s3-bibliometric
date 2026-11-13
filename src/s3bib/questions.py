@@ -38,6 +38,21 @@ STAGES = {
 }
 PREDICTION_STAGES = (7, 8)  # off by default: S3Config(prediction=True) or report(prediction=True)
 
+# Three levels of analysis (S3Config(level=...), report(level=...)); each includes the ones below.
+LEVELS = {
+    1: "S3: the published method (text similarity map)",
+    2: "Two-mode networks and knowledge graph (authors, institutions, journals, funders, references)",
+    3: "Prediction (link prediction and graph neural networks)",
+}
+# Level 2: questions that use two-mode data or relations beyond the S3 map.
+LEVEL2 = {"Q4", "Q15", "Q16", "Q17", "Q18", "Q19", "Q20", "Q35", "Q36", "Q37"}
+# Analyses reported in the S3 paper (Bekamiri, Østergaard & Timmermans 2027); the other
+# level-1 questions are extensions built on the same S3 map.
+PUBLISHED = {"Q1", "Q2", "Q3", "Q5", "Q6", "Q7", "Q8", "Q10", "Q38"}
+S3_PAPER = ("Bekamiri, H., Østergaard, C. R., & Timmermans, B. (2027). Semantic similarity score: "
+            "A new method for mapping intellectual structures in business research. Journal of "
+            "Business Research, 219, 116582. https://doi.org/10.1016/j.jbusres.2026.116582")
+
 
 @dataclass
 class Answer:
@@ -77,6 +92,19 @@ class Question:
     @property
     def prediction(self) -> bool:
         return self.stage in PREDICTION_STAGES
+
+    @property
+    def level(self) -> int:
+        return 3 if self.prediction else 2 if self.qid in LEVEL2 else 1
+
+    @property
+    def published(self) -> bool:
+        """True if the analysis is reported in the S3 paper; False for extensions."""
+        return self.qid in PUBLISHED
+
+    @property
+    def source(self) -> str:
+        return "S3 paper" if self.published else "extension"
 
 
 # ===========================================================================
@@ -719,24 +747,26 @@ def q_bridges(res) -> Answer:
 # ===========================================================================
 # Stage 4 - Evolution
 # ===========================================================================
-def q_growth(res) -> Answer:
-    a = Answer("Q13", "")
+def lifecycle(res, comms: List[int]) -> Tuple[pd.DataFrame, pd.DataFrame, List[int]]:
+    """(per-community lifecycle table, papers-per-year pivot, years) for the given communities.
+    Momentum = a community's share of its papers in the last 3 years / the field's share."""
     P = _clustered(res).dropna(subset=["year"])
-    comms = _main_comms(res, 8)
     P = P[P["community"].isin(comms)]
     if P.empty:
-        a.findings.append("No publication years available.")
-        return a
+        return pd.DataFrame(), pd.DataFrame(), []
     years = list(range(int(P["year"].min()), int(P["year"].max()) + 1))
     pivot = P.pivot_table(index="year", columns="community", values="title", aggfunc="count") \
         .reindex(years).fillna(0).astype(int)
-    last = years[-1]
+    last = int(res.papers["year"].max())
+    allp = res.papers.dropna(subset=["year"])
+    field_recent = (allp["year"] > last - 3).mean()
     rows = []
     for c in comms:
+        if c not in pivot:
+            continue
         s = pivot[c]
         recent = s[s.index > last - 3].sum()
         share_recent = recent / max(1, s.sum())
-        field_recent = pivot.loc[pivot.index > last - 3].values.sum() / max(1, pivot.values.sum())
         ratio = share_recent / field_recent if field_recent else 0
         status = "emerging" if s.index[s > 0].min() > last - 5 else \
             "growing" if ratio >= 1.2 else "declining" if ratio <= 0.8 else "stable"
@@ -744,7 +774,16 @@ def q_growth(res) -> Answer:
                      "peak year": int(s.idxmax()), "papers": int(s.sum()),
                      "share in last 3 years": round(share_recent, 2),
                      "relative momentum": round(ratio, 2), "status": status})
-    t = pd.DataFrame(rows)
+    return pd.DataFrame(rows), pivot, years
+
+
+def q_growth(res) -> Answer:
+    a = Answer("Q13", "")
+    comms = _main_comms(res, 8)
+    t, pivot, years = lifecycle(res, comms)
+    if t.empty:
+        a.findings.append("No publication years available.")
+        return a
     for st in ("emerging", "growing", "declining"):
         ids = t.loc[t["status"] == st, "community"].tolist()
         if ids:
@@ -754,8 +793,8 @@ def q_growth(res) -> Answer:
     a.tables["Community lifecycle"] = t
     a.tables["Papers per year"] = pivot.rename(columns=lambda c: _name(res, c)).reset_index()
     a.chart = {"type": "stack", "title": "Papers per year by community (stacked)", "x": years,
-               "series": {_name(res, c): pivot[c].tolist() for c in comms},
-               "color_ids": [int(c) for c in comms], "x_label": "year"}
+               "series": {_name(res, c): pivot[c].tolist() for c in comms if c in pivot},
+               "color_ids": [int(c) for c in comms if c in pivot], "x_label": "year"}
     from .ktree import ktree_spec
     kt = ktree_spec(res)
     if kt:
@@ -1278,6 +1317,8 @@ def q_homophily(res) -> Answer:
     t["within"], t["expected"], t["r"] = t["within"].round(3), t["expected"].round(3), t["r"].round(3)
     t = t.rename(columns={"ties": "ties with both values", "within": "share within the same group",
                           "expected": "expected by chance", "r": "assortativity r"})
+    t = t[["attribute", "layer", "assortativity r", "share within the same group", "expected by chance",
+           "ties with both values"]]  # the chart opens on r
     a.tables["Homophily by attribute and layer"] = t
     a.chart = {"type": "heatmap", "title": "Homophily (assortativity r) by attribute and layer",
                "rows": list(R.index), "cols": list(R.columns),
@@ -1359,6 +1400,56 @@ def q_direction(res) -> Answer:
     return a
 
 
+def q_evaluation(res) -> Answer:
+    """Q38: the S3 paper's evaluation (Tables 5-7)."""
+    from .evaluate import evaluate
+    a = Answer("Q38", "")
+    ev = evaluate(res)
+    t = ev["table"]
+    a.findings.append("As in the S3 paper (Tables 5-7): TCI = textual coherence of communities (1 - Jensen-"
+                      "Shannon divergence of TF-IDF words), silhouette on the SBERT embeddings for every method, "
+                      "and QI = within-community citations per paper. Each method is also scored on random "
+                      "clusters of its own sizes, because coherence depends on community size.")
+    s3 = t.iloc[0]
+    others = t.iloc[1:]
+    for m, base, label in (("TCI gain over random", None, "TCI gain over random clusters of the same sizes"),
+                           ("silhouette", "silhouette random (same sizes)", "Silhouette"),
+                           ("QI (top communities)", "QI random (same sizes)", "QI")):
+        if pd.isna(s3[m]):
+            continue
+        better = [r["method"] for _, r in others.iterrows() if pd.notna(r[m]) and r[m] > s3[m]]
+        txt = f"{label}: S3 = {s3[m]:.3f}" + "".join(f", {r['method']} = {r[m]:.3f}"
+                                                     for _, r in others.iterrows() if pd.notna(r[m]))
+        if base:
+            txt += f" (random clusters of S3's sizes: {s3[base]:.3f})"
+        a.findings.append(txt + ". " + ("S3 scores highest." if not better else f"Higher than S3: {', '.join(better)}."))
+    a.findings.append(f"S3 clusters {int(s3['papers clustered'])} papers in {int(s3['communities'])} communities; " +
+                      "; ".join(f"{r['method']} {int(r['papers clustered'])} in {int(r['communities'])}"
+                                for _, r in others.iterrows()) + ". Each method is judged on the papers it clusters.")
+    if ev["note"]:
+        a.findings.append(ev["note"])
+    a.findings.append("Absolute values depend on text cleaning and corpus; compare the methods within this run "
+                      "rather than with the numbers in the paper.")
+    show = t.copy()
+    num = [c for c in show.columns if c not in ("method", "papers clustered", "communities")]
+    show[num] = show[num].round(3)
+    # quality first, so the chart opens on it; coverage last
+    show = show[["method", "TCI gain over random", "silhouette", "QI (top communities)", "TCI",
+                 "TCI random (same sizes)", "silhouette random (same sizes)", "QI random (same sizes)",
+                 "papers clustered", "communities"]]
+    a.tables["Evaluation of S3 against other methods (S3 paper Tables 5-7)"] = show
+    a.chart = {"type": "bar", "title": "Silhouette on the SBERT embeddings (paper Table 6)",
+               "labels": show["method"].tolist(), "values": show["silhouette"].fillna(0).tolist()}
+    a.charts.append({"type": "bar", "title": "Topic coherence: TCI gain over random clusters of the same sizes "
+                                             "(paper Table 5)",
+                     "labels": show["method"].tolist(), "values": show["TCI gain over random"].fillna(0).tolist()})
+    if show["QI (top communities)"].notna().any():
+        a.charts.append({"type": "bar", "title": "Quality Index, QI (paper Table 7)",
+                         "labels": show["method"].tolist(),
+                         "values": show["QI (top communities)"].fillna(0).tolist()})
+    return a
+
+
 def _pq(fn: str, res) -> Answer:
     from . import predq
     return getattr(predq, fn)(res)
@@ -1382,6 +1473,10 @@ QUESTIONS: List[Question] = [
              "Multiplex layers (text, coupling, co-citation, direct citation, co-authorship): "
              "Jaccard overlap and lift over chance; projection check: significant ties (degree-preserving "
              "null model, FDR) and four-cycle clustering of the two-mode networks", (), q_layers),
+    Question("Q38", 1, "Recommended", "Does S3 give more coherent communities than other methods?",
+             "The S3 paper's evaluation (Tables 5-7), on your corpus.",
+             "TCI (Jensen-Shannon on TF-IDF), silhouette on SBERT embeddings and QI for S3, bibliographic "
+             "coupling (Leiden), BERTopic (if installed) and random clusters", (), q_evaluation),
     Question("Q5", 2, "Essential", "What are the main research communities?",
              "The core result: the intellectual structure of the field.",
              "Leiden (directed modularity) on the time-ordered S3 graph", (), q_communities),
@@ -1499,16 +1594,37 @@ def available(res, q: Question) -> Tuple[bool, str]:
 
 
 def prediction_on(res, prediction: Optional[bool] = None) -> bool:
-    return bool(res.config.prediction if prediction is None else prediction)
+    if prediction is not None:
+        return bool(prediction)
+    return bool(res.config.prediction or getattr(res.config, "level", 2) >= 3)
 
 
-def question_table(res, available_only: bool = False, prediction: Optional[bool] = None) -> pd.DataFrame:
-    """The ranked questions. The prediction stages (7-8) are listed only when enabled."""
+def report_level(res, level: Optional[int] = None, prediction: Optional[bool] = None) -> int:
+    """The level to show: the argument, else S3Config.level; prediction=True means level 3."""
+    lv = int(level if level is not None else getattr(res.config, "level", 2))
+    if lv not in LEVELS:
+        raise ValueError(f"level must be 1, 2 or 3, not {lv}")
+    if prediction is True or (prediction is None and level is None and res.config.prediction):
+        lv = 3
+    if prediction is False:
+        lv = min(lv, 2)
+    return lv
+
+
+def included(q: Question, level: int) -> bool:
+    return q.level <= level
+
+
+def question_table(res, available_only: bool = False, prediction: Optional[bool] = None,
+                   level: Optional[int] = None) -> pd.DataFrame:
+    """The ranked questions up to the chosen level (1 = S3 paper, 2 = + two-mode and knowledge
+    graph, 3 = + prediction). The prediction questions are listed only at level 3."""
     rows = []
-    on = prediction_on(res, prediction)
-    for rank, q in enumerate([q for q in QUESTIONS if on or not q.prediction], 1):
+    lv = report_level(res, level, prediction)
+    for rank, q in enumerate([q for q in QUESTIONS if included(q, lv)], 1):
         ok, why = available(res, q)
-        rows.append({"rank": rank, "id": q.qid, "stage": f"{q.stage}. {STAGES[q.stage]}",
+        rows.append({"rank": rank, "id": q.qid, "level": q.level, "source": q.source,
+                     "stage": f"{q.stage}. {STAGES[q.stage]}",
                      "priority": q.priority, "question": q.text, "method": q.method,
                      "available": ok, "missing": why})
     t = pd.DataFrame(rows)
@@ -1516,7 +1632,7 @@ def question_table(res, available_only: bool = False, prediction: Optional[bool]
 
 
 PREDICTION_OFF = ("Prediction questions (Q24-Q34) are off. Enable them with "
-                  "S3Config(prediction=True), or answer(..., prediction=True).")
+                  "S3Config(prediction=True) or S3Config(level=3), or answer(..., prediction=True).")
 
 
 def answer(res, qid: str, prediction: Optional[bool] = None) -> Answer:

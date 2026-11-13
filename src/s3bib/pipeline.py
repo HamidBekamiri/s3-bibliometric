@@ -99,6 +99,9 @@ class S3Config:
     # (short titles such as "Introduction" also need the year and first author to match).
     citation_match: str = "lenient"
     prediction: bool = False           # include the prediction questions (link prediction, GNNs)
+    # Level of analysis in question lists and reports: 1 = the published S3 method,
+    # 2 = + two-mode networks and knowledge graph (default), 3 = + prediction.
+    level: int = 2
     # Projected relations (coupling, co-citation, co-authorship) keep only ties that are
     # significant under a degree-preserving null model (see s3bib.backbone): in the map and in Q35-Q37.
     backbone: bool = False
@@ -108,6 +111,8 @@ class S3Config:
         from .hybrid import resolve_weights
         from .models import default_thresholds, resolve_model
         self.map_weights = resolve_weights(self.map_weights)
+        if self.level not in (1, 2, 3):
+            raise ValueError("level must be 1, 2 or 3")
         if self.citation_match not in ("lenient", "strict"):
             raise ValueError("citation_match must be 'lenient' or 'strict'")
         self.model_name = resolve_model(self.model_name)
@@ -538,12 +543,13 @@ class S3Result:
             self._graph = build_graph(self.map_matrix(), t)
         return self._graph
 
-    def questions(self, available_only: bool = False, prediction: Optional[bool] = None) -> pd.DataFrame:
+    def questions(self, available_only: bool = False, prediction: Optional[bool] = None,
+                  level: Optional[int] = None) -> pd.DataFrame:
         """The ranked research questions S3 can answer, and whether this data supports each.
-        The prediction questions (Q24-Q34) are listed when prediction=True or
-        config.prediction is set."""
+        level: 1 = the published S3 method, 2 = + two-mode networks and knowledge graph
+        (default, S3Config.level), 3 = + prediction (Q24-Q34; also prediction=True)."""
         from .questions import question_table
-        return question_table(self, available_only, prediction)
+        return question_table(self, available_only, prediction, level)
 
     def find_experts(self, text: str, kind: str = "author", n: int = 10,
                      prediction: Optional[bool] = None) -> pd.DataFrame:
@@ -592,11 +598,28 @@ class S3Result:
         return knowledge_tree(self, window_years, n_communities)
 
     def report(self, path: Union[str, Path], title: Optional[str] = None,
-               prediction: Optional[bool] = None) -> Path:
-        """Answer every available question and write one self-contained HTML report.
-        prediction=True adds the link-prediction and GNN questions (Q24-Q34)."""
+               prediction: Optional[bool] = None, level: Optional[int] = None,
+               layout: str = "review") -> Path:
+        """Write one self-contained HTML report.
+        layout="review" (default): organised for a literature review - brief, scope, theme
+        cards, how themes connect, evolution, research agenda and a methods appendix, with
+        downloads (RIS/BibTeX reading lists, themes table, methods paragraph).
+        layout="questions": every question in order, grouped by stage.
+        level: 1 = the published S3 method, 2 = + two-mode networks and knowledge graph
+        (default, S3Config.level), 3 = + prediction (also prediction=True)."""
+        if layout == "review":
+            from .review import build_review
+            return build_review(self, path, title, level=level, prediction=prediction)
+        if layout != "questions":
+            raise ValueError("layout must be 'review' or 'questions'")
         from .report import build_report
-        return build_report(self, path, title, prediction=prediction)
+        return build_report(self, path, title, prediction=prediction, level=level)
+
+    def export_review(self, directory: Union[str, Path], level: Optional[int] = None) -> Dict[str, Path]:
+        """Files for writing the review: reading_list.ris and .bib (top papers per theme),
+        themes.csv, prisma.csv (records in and out) and methods.txt (a methods paragraph)."""
+        from .review import export_review
+        return export_review(self, directory, level)
 
     # ---- views -----------------------------------------------------------
     def communities(self, min_size: int = 2) -> pd.DataFrame:
