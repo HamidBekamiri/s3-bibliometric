@@ -9,7 +9,9 @@ papers, outliers, and the citation flows between communities. Your AI assistant 
 label the communities and write up the intellectual structure.
 
 **No coding needed**: see [Use it without coding: Claude, ChatGPT or Colab](#use-it-without-coding-claude-chatgpt-or-colab)
-for step-by-step setup with Claude Desktop, Claude Code, Claude.ai, ChatGPT or a Google Colab notebook.
+for step-by-step setup with Claude Desktop, Claude Code, Claude.ai, ChatGPT or a Google Colab notebook,
+or the visual guides: [S3 step by step](https://hamidbekamiri.github.io/s3-bibliometric/) and
+[Scopus export for S3](https://hamidbekamiri.github.io/s3-bibliometric/scopus-export.html).
 
 ## How S3 works
 
