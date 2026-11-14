@@ -655,3 +655,13 @@ def test_map_choice(res, df, tmp_path):
     back = s3bib.S3Result.load(auto.save(tmp_path / "run"))
     assert back.map_choice["recommended"] == ch["recommended"] and len(back.map_choice["table"]) == len(t)
     assert "Before the analysis we compared" in auto.report(tmp_path / "auto.html").read_text()
+
+
+def test_r_package_version_matches_python():
+    """The R package (r/) runs the Python library of its own version, so the two
+    version numbers must always be the same: bump both in every release."""
+    import re
+    root = Path(__file__).resolve().parents[1]
+    py = re.search(r'^version = "([^"]+)"', (root / "pyproject.toml").read_text(), re.M).group(1)
+    r = re.search(r"^Version:\s*(\S+)", (root / "r" / "DESCRIPTION").read_text(), re.M).group(1)
+    assert r == py == s3bib.__version__

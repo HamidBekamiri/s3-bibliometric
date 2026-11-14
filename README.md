@@ -545,6 +545,22 @@ res.export("results/")                 # CSVs
 res.save("runs/innovation")            # reload with s3bib.S3Result.load(...)
 ```
 
+## Use it from R
+
+The R package **s3bibliometric** runs this library of the same version, so R and Python give the
+same results. Details: [`r/README.md`](r/README.md).
+
+```r
+remotes::install_github("AI-Growth-Lab/s3-bibliometric", subdir = "r")
+library(s3bibliometric)
+res <- s3_run("scopus.csv", map = "auto")
+s3_communities(res)
+s3_report(res, "s3_report.html")
+```
+
+Python is set up automatically on first use (via reticulate). The R and Python version numbers are
+always the same: a test fails if they differ, and every release updates both.
+
 ## Input
 
 Export from Scopus as CSV with at least **Title** and **Abstract**. Also used if present:

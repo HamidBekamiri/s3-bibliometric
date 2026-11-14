@@ -53,4 +53,4 @@ build-backend = "hatchling.build"
 packages = ["src/s3bib"]
 
 [tool.hatch.build.targets.sdist]
-exclude = [".venv", ".github"]
+exclude = [".venv", ".github", "r"]

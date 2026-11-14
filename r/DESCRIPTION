@@ -1,0 +1,31 @@
+Package: s3bibliometric
+Type: Package
+Title: Semantic Similarity Score (S3) for Mapping Research Fields
+Version: 0.14.4
+Authors@R: c(
+    person("Hamid", "Bekamiri", email = "hamidb@business.aau.dk",
+           role = c("aut", "cre")),
+    person("Christian Richter", "Østergaard", role = "ctb",
+           comment = c(ORCID = "0000-0003-1782-202X", note = "S3 method co-author")),
+    person("Bram", "Timmermans", role = "ctb",
+           comment = c(note = "S3 method co-author")))
+Description: Maps the intellectual structure of a research field from the
+    titles and abstracts of its papers with the Semantic Similarity Score (S3)
+    method (Bekamiri, Østergaard and Timmermans, 2027,
+    <doi:10.1016/j.jbusres.2026.116582>): transformer embeddings, a
+    time-ordered similarity graph and Leiden community detection, with
+    citation-based indicators of the communities. The package is an R
+    interface to the 's3-bibliometric' Python library, so R and Python give
+    the same results: run the analysis, read communities and answers as data
+    frames, compare text-only and hybrid maps, and write a report organised
+    for a literature review.
+License: MIT + file LICENSE
+URL: https://github.com/AI-Growth-Lab/S3,
+    https://github.com/AI-Growth-Lab/s3-bibliometric,
+    https://ai-growth-lab.github.io/S3/
+BugReports: https://github.com/AI-Growth-Lab/s3-bibliometric/issues
+Depends: R (>= 4.1)
+Imports: reticulate (>= 1.41), utils
+SystemRequirements: Python (>= 3.10) with the 's3-bibliometric' package
+    (provisioned automatically by 'reticulate', or with s3_install())
+Encoding: UTF-8
