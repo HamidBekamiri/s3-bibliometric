@@ -564,6 +564,11 @@ The tests run on real data: 109 [OpenAlex](https://openalex.org) records (CC0) o
 capacity and work group diversity, with their real all-mpnet-base-v2 embeddings, in
 `tests/data/`. `python tests/data/build_openalex_sample.py` rebuilds them.
 
+## Authors
+
+[Hamid Bekamiri](https://github.com/HamidBekamiri) (maintainer), with S3 co-authors
+[Christian Richter Østergaard](https://orcid.org/0000-0003-1782-202X) and Bram Timmermans.
+
 ## Citation
 
 S3 project: [github.com/AI-Growth-Lab/S3](https://github.com/AI-Growth-Lab/S3). To propose a new
