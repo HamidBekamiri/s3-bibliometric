@@ -123,6 +123,17 @@ def _map_score(res) -> str:
     return "S3" if not w else f"the map score ({map_label(w)})"
 
 
+def coupling_note(res) -> str:
+    """Where bibliographic coupling gets each paper's references from (after enrich_citations)."""
+    from .hybrid import reference_source
+    if "reference_eids" not in res.papers:
+        return ""
+    s = reference_source(res.papers)
+    return (f"Bibliographic coupling uses the cited Scopus IDs from the Scopus API for {s['scopus_ids']} papers"
+            + (f" and the References text for {s['text']}" if s["text"] else "")
+            + (f"; {s['none']} papers have no references" if s["none"] else "") + ".")
+
+
 def _display_name(res, c, n_terms: int = 3) -> str:
     """Name shown on graphs: the saved label, or else the community's top c-TF-IDF terms."""
     c = int(c)
@@ -442,6 +453,9 @@ def q_validation(res) -> Answer:
                 cols.append(vocab.setdefault(key, len(vocab)))
     m = len(sample)
     R = sp.csr_matrix((np.ones(len(rows), dtype=np.float32), (rows, cols)), shape=(m, max(1, len(vocab))))
+    if "reference_eids" in P and P["reference_eids"].notna().any():  # exact cited Scopus IDs
+        from .hybrid import reference_matrix
+        R = reference_matrix(P.iloc[sample].reset_index(drop=True)).tocsr()
     R.data[:] = 1.0
     inter = (R @ R.T).toarray()
     sizes = np.asarray(R.sum(axis=1)).ravel()
@@ -506,6 +520,8 @@ def q_validation(res) -> Answer:
                           f"NMI = {agree['NMI']:.2f}, ARI = {agree['ARI']:.2f}.")
     a.findings.append(f"{int((~has_refs).sum())} of {m} papers have no references and can only be "
                       "mapped by S3 (an advantage of the semantic approach).")
+    if coupling_note(res):
+        a.findings.append(coupling_note(res))
     a.tables["Correlation between methods (Pearson, paper pairs)"] = corr.round(3).reset_index().rename(columns={"index": "method"})
     a.tables["Agreement summary"] = pd.DataFrame([{
         "papers compared": m, "papers with references": int(has_refs.sum()),
@@ -1411,6 +1427,9 @@ def q_map_choice(res) -> Answer:
                       "communities of the same sizes. Text coherence (TCI gain over random), stability (ARI "
                       "across seeds and 90% samples) and coverage are scored as well.")
     a.findings.append("Decision rule, fixed in advance: " + ch["rule"])
+    note = coupling_note(res)
+    if note:
+        a.findings.append(note)
     rec = ch["recommended"]
     a.findings.append(f"Recommended map: {rec}. " + " ".join(ch["reasons"][:1]))
     a.findings.extend(ch["reasons"][1:])

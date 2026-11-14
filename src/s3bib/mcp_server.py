@@ -48,7 +48,8 @@ mcp = _Server(
         "environment; never ask the user to paste a key into the chat). "
         "Typical flow: compare_maps on the Scopus CSV if it has References (offer it: it says whether "
         "text alone or text plus a citation relation gives the better map) -> run_s3_analysis with the "
-        "map the user picks -> enrich_citations if the user wants "
+        "map the user picks -> enrich_citations (with a Scopus key: exact, complete reference lists; "
+        "then compare_maps with run_id to check the map choice on the exact data) if the user wants "
         "exact citations -> get_community for each main "
         "community and save_community_labels with short labels -> list_questions shows "
         "the ranked research questions (Q1-Q23 and Q35-Q37; Q24-Q34 prediction when asked) this dataset can answer -> "
@@ -160,9 +161,10 @@ def run_s3_analysis(
 
 
 @mcp.tool()
-def compare_maps(csv_path: str, embedding_model: str = "mpnet", start_year: Optional[int] = None,
-                 end_year: Optional[int] = None, seed: int = 42, extended: bool = False,
-                 strict_citations: bool = False) -> Dict[str, Any]:
+def compare_maps(csv_path: Optional[str] = None, embedding_model: str = "mpnet",
+                 start_year: Optional[int] = None, end_year: Optional[int] = None, seed: int = 42,
+                 extended: bool = False, strict_citations: bool = False,
+                 run_id: Optional[str] = None) -> Dict[str, Any]:
     """Before the full analysis: which map should S3 use for this corpus? Compares the text map
     (the published method) with text+coupling, text+cocitation and text+direct (extended=True adds
     10% and 50% citation weights and significant-ties variants). 20% of the in-corpus citation
@@ -170,14 +172,23 @@ def compare_maps(csv_path: str, embedding_model: str = "mpnet", start_year: Opti
     communities (gain over random communities of the same sizes), on text coherence (TCI gain over
     random), stability (ARI across seeds and 90% samples) and coverage. A rule fixed in advance
     recommends a map. Show the user the table and the recommendation, then pass the chosen map to
-    run_s3_analysis as map_relations. Takes a few minutes; embeddings are cached for the run."""
+    run_s3_analysis as map_relations. Takes a few minutes; embeddings are cached for the run.
+    With run_id instead of csv_path, compares on that run's papers and citation links: use this
+    after enrich_citations, so the comparison uses the exact Scopus reference lists."""
     from .mapchoice import compare_maps as _compare
-    p = Path(csv_path).expanduser()
-    if not p.exists():
-        raise ValueError(f"File not found: {p}")
-    cfg = S3Config(start_year=start_year, end_year=end_year, seed=seed, cache_dir=str(HOME / "_cache"),
-                   model_name=embedding_model, citation_match="strict" if strict_citations else "lenient")
-    ch = _compare(p, cfg, extended=extended)
+    if run_id:
+        res = _get(run_id)
+        ch = res.compare_maps(extended=extended, refresh=True)
+        res.save(_run_dir(run_id))
+    else:
+        if not csv_path:
+            raise ValueError("Give csv_path, or run_id for an existing run.")
+        p = Path(csv_path).expanduser()
+        if not p.exists():
+            raise ValueError(f"File not found: {p}")
+        cfg = S3Config(start_year=start_year, end_year=end_year, seed=seed, cache_dir=str(HOME / "_cache"),
+                       model_name=embedding_model, citation_match="strict" if strict_citations else "lenient")
+        ch = _compare(p, cfg, extended=extended)
     t = ch["table"].drop(columns=["weights", "significant ties"], errors="ignore").round(4)
     w = ch["weights"]
     if ch["recommended"] in ("text", "text+coupling", "text+cocitation", "text+direct"):
@@ -200,10 +211,13 @@ def list_embedding_models() -> List[Dict[str, Any]]:
 
 @mcp.tool()
 def enrich_citations(run_id: str) -> Dict[str, Any]:
-    """Replace approximate citation links (matched from reference titles) with exact links
-    from the Scopus Abstract Retrieval API. Reads SCOPUS_API_KEY (and optional
-    SCOPUS_INST_TOKEN) from this server's environment; needs Scopus entitlement (institution
-    network or token). Takes about 0.2 s per paper; results are cached."""
+    """Exact, complete reference lists from the Scopus Abstract Retrieval API, for every paper of
+    the run (by EID). The in-corpus citation links become exact, and bibliographic coupling uses
+    the cited Scopus IDs instead of the exported References text (which can be truncated or
+    missing). If the run's map uses citation relations (or was chosen with map_relations="auto"),
+    the map and communities are rebuilt and saved labels are dropped: label the communities after
+    this step. Reads SCOPUS_API_KEY (and optional SCOPUS_INST_TOKEN) from this server's environment;
+    needs Scopus entitlement (institution network or token). About 0.2 s per paper; cached."""
     from .scopus import ScopusAccessError, enrich_citations as _enrich
     res = _get(run_id)
     try:

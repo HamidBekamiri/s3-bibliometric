@@ -764,6 +764,35 @@ class S3Result:
         self.map_choice = choice
         return choice
 
+    def rebuild(self, progress: Optional[ProgressCallback] = None) -> "S3Result":
+        """Build the map and communities again on this run's papers, embeddings and citation
+        links (e.g. after enrich_citations). A map chosen with map_weights="auto" is chosen
+        again. Saved labels are dropped, because the communities change. Returns self."""
+        from dataclasses import replace
+        say = progress or (lambda s, p: None)
+        set_seed(self.config.seed)
+        cfg, choice = self.config, None
+        base = self.papers.drop(columns=[c for c in ("community", "eigen_centrality", "is_outlier",
+                                                     "nearest_similarity", "suggested_community",
+                                                     "local_citations") if c in self.papers]).copy()
+        if (self.map_choice or {}).get("auto"):
+            from .mapchoice import compare_prepared
+            choice = compare_prepared(base, self.embeddings, self.citation_pairs, cfg,
+                                      extended=bool(self.map_choice.get("extended")))
+            choice["auto"] = True
+            cfg = replace(cfg, map_weights=choice["weights"], backbone=choice["backbone"])
+        new = _run_prepared(base, self.embeddings, [], cfg, say, choice, pairs_given=self.citation_pairs)
+        self.papers, self.scan, self.best, self.config = new.papers, new.scan, new.best, new.config
+        if choice is not None:
+            self.map_choice = choice
+        elif self.map_choice is not None:
+            self.map_choice = None  # compared on the old links: compare again with compare_maps()
+        self.labels = {}
+        for k in ("_layers", "_hybrid", "_graph", "_hetero", "_rs", "_ctfidf"):
+            if hasattr(self, k):
+                setattr(self, k, None)
+        return self
+
     def summary(self, n_communities: int = 15) -> Dict[str, Any]:
         comms = self.communities()
         return {
@@ -792,6 +821,8 @@ class S3Result:
             from .mapchoice import to_jsonable
             (d / "map_choice.json").write_text(json.dumps(to_jsonable(self.map_choice), indent=2,
                                                           default=_json_default))
+        elif (d / "map_choice.json").exists():  # a comparison made on links that have changed since
+            (d / "map_choice.json").unlink()
         return d
 
     @classmethod
@@ -887,8 +918,13 @@ def prepare(source: Union[str, Path, pd.DataFrame], cfg: S3Config, say: Progress
 
 
 def _run_prepared(df: pd.DataFrame, emb: np.ndarray, removed: List[Dict[str, Any]], cfg: S3Config,
-                  say: ProgressCallback, choice: Optional[Dict[str, Any]] = None) -> S3Result:
+                  say: ProgressCallback, choice: Optional[Dict[str, Any]] = None,
+                  pairs_given: Optional[List[tuple[int, int]]] = None) -> S3Result:
+    """The map, threshold scan and communities. pairs_given: citation links to use instead of
+    matching titles (e.g. exact links from the Scopus API, when rebuilding a run)."""
     n = len(df)
+    match = (lambda: list(pairs_given)) if pairs_given is not None else \
+        (lambda: citation_edges(df, strict=cfg.citation_match == "strict"))
     say("Computing S3 matrix", 0.5)
     years = df["year"].to_numpy(dtype=float)
     thresholds = cfg.thresholds
@@ -896,7 +932,7 @@ def _run_prepared(df: pd.DataFrame, emb: np.ndarray, removed: List[Dict[str, Any
     if cfg.map_weights:
         from .hybrid import density_thresholds, hybrid_matrix
         say("Matching in-corpus citations", 0.5)
-        pairs = citation_edges(df, strict=cfg.citation_match == "strict")
+        pairs = match()
         say("Building the hybrid map (S3 + citation relations)", 0.52)
         s3 = hybrid_matrix(emb, df, pairs, cfg.map_weights, cfg.backbone_alpha if cfg.backbone else None)
         s3_dir = apply_temporal_mask(s3, years) if cfg.temporal_mask else s3
@@ -953,7 +989,7 @@ def _run_prepared(df: pd.DataFrame, emb: np.ndarray, removed: List[Dict[str, Any
 
         if not cfg.map_weights:
             say("Matching in-corpus citations", 0.9)
-            pairs = citation_edges(df, strict=cfg.citation_match == "strict")
+            pairs = match()
         if pairs:
             # local citations = citations a paper receives from other papers in the corpus
             received = Counter(j for _, j in pairs)

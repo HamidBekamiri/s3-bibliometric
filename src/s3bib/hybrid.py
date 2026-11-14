@@ -85,18 +85,38 @@ def resolve_weights(w: Union[None, str, bool, Dict[str, float]]) -> Optional[Dic
     return None if out == {"s3": 1.0} else out
 
 
+def _ids(v) -> List[str]:
+    return [x.strip() for x in v.split(";") if x.strip()] if isinstance(v, str) else []
+
+
+def reference_source(df: pd.DataFrame) -> Dict[str, int]:
+    """How many papers' references come from Scopus IDs (after enrich_citations), from the
+    References text, or are missing."""
+    ids = df["reference_eids"].map(_ids) if "reference_eids" in df else pd.Series([[]] * len(df), index=df.index)
+    text = df["references"].fillna("").astype(str).str.strip() != "" if "references" in df else ids.map(lambda _: False)
+    use_ids = ids.map(len) > 0
+    return {"scopus_ids": int(use_ids.sum()), "text": int((~use_ids & text).sum()),
+            "none": int((~use_ids & ~text).sum())}
+
+
 def reference_matrix(df: pd.DataFrame):
-    """Sparse papers x cited works (references normalised to their first 80 characters)."""
+    """Sparse papers x cited works. A paper's cited works are its cited Scopus IDs when
+    enrich_citations retrieved them (exact, complete lists), otherwise its References text
+    normalised to the first 80 characters of each reference."""
     from scipy.sparse import csr_matrix
     from .pipeline import _norm_text
     from .questions import _split_refs
     vocab: Dict[str, int] = {}
     r, c = [], []
-    for i, v in enumerate(df["references"].tolist()):
-        for ref in set(_norm_text(x)[:80] for x in _split_refs(v)):
-            if len(ref) > 20:
-                c.append(vocab.setdefault(ref, len(vocab)))
-                r.append(i)
+    refs = df["references"].tolist() if "references" in df else [None] * len(df)
+    ids = df["reference_eids"].tolist() if "reference_eids" in df else [None] * len(df)
+    for i, (v, e) in enumerate(zip(refs, ids)):
+        keys = {"eid:" + x for x in _ids(e)}
+        if not keys:
+            keys = {ref for ref in (_norm_text(x)[:80] for x in _split_refs(v)) if len(ref) > 20}
+        for k in keys:
+            c.append(vocab.setdefault(k, len(vocab)))
+            r.append(i)
     return csr_matrix((np.ones(len(r), dtype=np.float32), (r, c)), shape=(len(df), max(1, len(vocab))))
 
 

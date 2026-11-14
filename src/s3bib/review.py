@@ -299,6 +299,12 @@ def methods_text(res, level: int) -> str:
         s.append(f"In-corpus citations ({len(res.citation_pairs)} links) were {how}; we used them to compute each "
                  "theme's Quality Index (within-theme citations per paper) and Maturity Index (share of the field's "
                  "in-corpus citations).")
+    if "reference_eids" in res.papers and res.papers["reference_eids"].notna().any():
+        from .hybrid import reference_source
+        rs = reference_source(res.papers)
+        s.append(f"Reference lists were retrieved from the Scopus API as Scopus IDs; bibliographic coupling used "
+                 f"these for {rs['scopus_ids']} papers" + (f" and the exported reference text for the other "
+                                                          f"{rs['text']}" if rs["text"] else "") + ".")
     if level >= 2:
         s.append("Authors, affiliations, journals, funders and references were used to characterise the themes "
                  "(two-mode networks and a knowledge graph), as extensions of the published method.")

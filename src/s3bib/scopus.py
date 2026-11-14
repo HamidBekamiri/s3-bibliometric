@@ -56,10 +56,19 @@ def fetch_reference_eids(eid: str, api_key: str, inst_token: Optional[str] = Non
                          session=None, cache_dir: Optional[Path] = None,
                          max_retries: int = 5) -> List[str]:
     """All cited EIDs of one paper (paginated, cached on disk)."""
+    return fetch_references(eid, api_key, inst_token, session, cache_dir, max_retries)[0]
+
+
+def fetch_references(eid: str, api_key: str, inst_token: Optional[str] = None,
+                     session=None, cache_dir: Optional[Path] = None,
+                     max_retries: int = 5) -> tuple[List[str], Optional[int]]:
+    """(cited EIDs, number of references Scopus lists for the paper), paginated and cached.
+    References that Scopus cannot link to a record have no EID, so the list can be shorter."""
     if cache_dir is not None:
         f = Path(cache_dir) / f"{eid}.json"
         if f.exists():
-            return json.loads(f.read_text())
+            d = json.loads(f.read_text())
+            return (d, None) if isinstance(d, list) else (d["eids"], d.get("total"))
     if session is None:
         import requests
         session = requests.Session()
@@ -68,7 +77,7 @@ def fetch_reference_eids(eid: str, api_key: str, inst_token: Optional[str] = Non
     if inst_token:
         headers["X-ELS-Insttoken"] = inst_token
     out: List[str] = []
-    start = 1
+    start, total = 1, 0
     while True:
         for attempt in range(max_retries):
             r = s.get(API.format(eid=eid), headers=headers,
@@ -91,15 +100,23 @@ def fetch_reference_eids(eid: str, api_key: str, inst_token: Optional[str] = Non
         start += len(page)
     if cache_dir is not None:
         Path(cache_dir).mkdir(parents=True, exist_ok=True)
-        (Path(cache_dir) / f"{eid}.json").write_text(json.dumps(out))
-    return out
+        (Path(cache_dir) / f"{eid}.json").write_text(json.dumps({"eids": out, "total": total}))
+    return out, total
 
 
 def enrich_citations(res, api_key: Optional[str] = None, inst_token: Optional[str] = None,
                      cache_dir: Optional[str] = "~/s3bib_runs/_scopus",
                      progress: Optional[Callable[[str, float], None]] = None,
-                     session=None, pause: float = 0.12) -> Dict[str, Any]:
-    """Replace the run's citation links with exact links from the Scopus API.
+                     session=None, pause: float = 0.12, rebuild: bool = True) -> Dict[str, Any]:
+    """Exact reference lists from the Scopus API, for every paper of the run (by EID).
+
+    - The in-corpus citation links (direct citation, co-citation, QI, MI) become exact.
+    - Each paper's cited Scopus IDs are kept in res.papers['reference_eids'], and bibliographic
+      coupling uses them instead of the References text: complete lists (no truncated
+      cells) and exact identifiers instead of matching reference strings.
+    - rebuild=True: if the map uses citation relations (or was chosen with map_weights="auto"),
+      the map and its communities are built again on the exact data. Saved labels are then
+      dropped, because the communities change.
     Updates res.citation_pairs, res.papers['local_citations'] and res.citation_source."""
     api_key = api_key or os.environ.get("SCOPUS_API_KEY")
     inst_token = inst_token or os.environ.get("SCOPUS_INST_TOKEN")
@@ -113,11 +130,17 @@ def enrich_citations(res, api_key: Optional[str] = None, inst_token: Optional[st
     cdir = Path(cache_dir).expanduser() if cache_dir else None
     pairs: Set[tuple] = set()
     failed: List[Dict[str, str]] = []
+    lists: Dict[int, str] = {}
+    n_ids = n_total = 0
     n = len(eid_to_idx)
     for k, (eid, i) in enumerate(eid_to_idx.items()):
         try:
             cached = cdir is not None and (cdir / f"{eid}.json").exists()
-            for cited in fetch_reference_eids(eid, api_key, inst_token, session=session, cache_dir=cdir):
+            cited_all, total = fetch_references(eid, api_key, inst_token, session=session, cache_dir=cdir)
+            lists[i] = "; ".join(dict.fromkeys(cited_all))
+            if total:
+                n_ids, n_total = n_ids + len(cited_all), n_total + total
+            for cited in cited_all:
                 j = eid_to_idx.get(cited)
                 if j is not None and j != i:
                     pairs.add((i, j))
@@ -134,5 +157,21 @@ def enrich_citations(res, api_key: Optional[str] = None, inst_token: Optional[st
     received = Counter(j for _, j in res.citation_pairs)
     res.papers["local_citations"] = [received.get(i, 0) for i in range(len(P))]
     res.citation_source = "scopus_api"
+    res.papers["reference_eids"] = [lists.get(i) for i in range(len(P))]
+    for k in ("_layers", "_hybrid", "_graph", "_hetero", "_rs"):  # caches built on the old links
+        if hasattr(res, k):
+            setattr(res, k, None)
+    rebuilt = False
+    if rebuild and (res.config.map_weights or (res.map_choice or {}).get("auto")):
+        if progress:
+            progress("Rebuilding the map on the exact citations", 1.0)
+        res.rebuild()
+        rebuilt = True
+    elif res.map_choice is not None:
+        res.map_choice = None  # compared on the old links; Q0 compares again on the exact ones
+    from .hybrid import reference_source
     return {"papers_queried": n, "failed": len(failed), "failures": failed[:20],
-            "citation_links_before": old, "citation_links_now": len(res.citation_pairs)}
+            "citation_links_before": old, "citation_links_now": len(res.citation_pairs),
+            "papers_with_reference_ids": sum(1 for v in lists.values() if v),
+            "share_of_references_with_scopus_id": round(n_ids / n_total, 3) if n_total else None,
+            "coupling_reference_source": reference_source(res.papers), "map_rebuilt": rebuilt}

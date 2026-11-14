@@ -260,6 +260,66 @@ def test_scopus_enrichment_with_mocked_api(df, tmp_path):
     assert Session.calls == n  # second run comes from the cache
 
 
+def _mock_scopus(df):
+    """A mocked Scopus API that answers with each paper's real OpenAlex reference list."""
+    refs = df.set_index("EID")["Referenced IDs"].fillna("")
+
+    class Resp:
+        def __init__(self, payload):
+            self.payload, self.status_code, self.headers = payload, 200, {}
+        def json(self):
+            return self.payload
+        def raise_for_status(self):
+            pass
+
+    class Session:
+        def get(self, url, headers, params, timeout):
+            cited = [x for x in refs[url.rsplit("/", 1)[-1]].split("; ") if x]
+            return Resp({"abstracts-retrieval-response": {"references": {
+                "@total-references": str(len(cited)), "reference": [{"scopus-eid": x} for x in cited]}}})
+    return Session(), refs
+
+
+def test_coupling_from_scopus_reference_ids(df, tmp_path):
+    """After enrich_citations, coupling uses each paper's cited IDs (complete, exact), the map is
+    rebuilt when it uses citations, and the report says where the references came from."""
+    from s3bib.hybrid import reference_matrix, reference_source
+    r = s3bib.run_s3(df, s3bib.S3Config(map_weights="text+coupling"), **QUIET)
+    r.labels = {0: "a label"}
+    session, refs = _mock_scopus(df)
+    stats = s3bib.enrich_citations(r, api_key="test-key", session=session, cache_dir=tmp_path, pause=0)
+    real = {e: [x for x in refs[e].split("; ") if x] for e in r.papers["eid"]}
+    with_ids = sum(1 for v in real.values() if v)
+    assert stats["papers_with_reference_ids"] == with_ids and stats["share_of_references_with_scopus_id"] == 1.0
+    assert stats["coupling_reference_source"]["scopus_ids"] == with_ids and stats["map_rebuilt"]
+    assert r.labels == {} and r.best is not None and r.config.map_weights == {"s3": 0.75, "coupling": 0.25}
+    # shared references counted on the real cited IDs
+    R = reference_matrix(r.papers).tocsr()
+    shared = (R @ R.T).toarray()
+    eids = r.papers["eid"].tolist()
+    for i in range(0, len(eids), 7):
+        for j in range(i + 1, len(eids), 11):
+            if real[eids[i]] and real[eids[j]]:
+                assert shared[i, j] == len(set(real[eids[i]]) & set(real[eids[j]]))
+    assert reference_source(r.papers)["scopus_ids"] == with_ids
+    assert any("cited Scopus IDs" in f for f in r.answer("Q4").findings)
+    back = s3bib.S3Result.load(r.save(tmp_path / "run"))
+    assert back.papers["reference_eids"].tolist() == r.papers["reference_eids"].tolist()
+    assert "retrieved from the Scopus API as Scopus IDs" in r.report(tmp_path / "r.html").read_text()
+
+    # a map chosen with "auto" is chosen again on the exact links
+    auto = s3bib.run_s3(df, s3bib.S3Config(map_weights="auto"), **QUIET)
+    s3bib.enrich_citations(auto, api_key="test-key", session=session, cache_dir=tmp_path, pause=0)
+    assert auto.map_choice["auto"] and auto.citation_source == "scopus_api"
+    assert auto.map_choice["n_links"] == len(auto.citation_pairs)
+    # caches written by earlier versions (a plain list of EIDs) still load
+    import json
+    from s3bib.scopus import fetch_references
+    (tmp_path / "old").mkdir()
+    (tmp_path / "old" / "X.json").write_text(json.dumps(["2-s2.0-1"]))
+    assert fetch_references("X", "k", cache_dir=tmp_path / "old") == (["2-s2.0-1"], None)
+
+
 def test_scopus_access_error(res, monkeypatch):
     class Denied:
         def get(self, *a, **k):

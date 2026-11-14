@@ -166,6 +166,10 @@ def main(argv=None) -> None:
         print(f"\nScopus: {stats['citation_links_now']} exact citation links "
               f"(title matching found {stats['citation_links_before']}); {stats['failed']} papers failed.",
               file=sys.stderr)
+        src = stats["coupling_reference_source"]
+        print(f"Bibliographic coupling uses the Scopus reference IDs for {src['scopus_ids']} papers"
+              f" and the References text for {src['text']}." + (" The map was rebuilt on the exact data."
+                                                                 if stats["map_rebuilt"] else ""), file=sys.stderr)
     if a.save:
         res.save(a.save)
     out = res.report(a.output, a.title, prediction=True if a.prediction else None,

@@ -51,11 +51,29 @@ The most-cited copy is kept; `res.removed` lists every dropped record and why.
 Any other sentence-transformers model name also works. The threshold range 0.75–0.85 was
 calibrated for mpnet; other models get a wider scan (0.40–0.95) unless you set one.
 
-**Exact citations (optional).** By default citations are found by matching titles in the
-References text. With a Scopus API key (`SCOPUS_API_KEY`, from dev.elsevier.com) S3 fetches
-each paper's reference list from the Scopus API instead, so only real links count. This
-needs Scopus entitlement: your institution's network or an institutional token
-(`SCOPUS_INST_TOKEN`).
+**Exact, complete references (optional).** A Scopus CSV export can miss references: some
+records have none, and a long reference list can be cut at 32,767 characters, the cell limit
+of spreadsheet programs (do not open and re-save the export in Excel). By default S3 finds
+citations by matching titles in the References text and builds bibliographic coupling from
+the reference strings. With a Scopus API key (`SCOPUS_API_KEY`, from dev.elsevier.com),
+`enrich_citations` fetches every paper's full reference list as Scopus IDs, using the EID
+column of your original export (no new export needed):
+
+- in-corpus citations become exact (direct citation, co-citation, QI and MI);
+- bibliographic coupling counts shared cited Scopus IDs instead of matching reference text,
+  for every paper the API returns references for (the others keep their References text);
+- if the map uses citation relations, or was chosen with `map_weights="auto"`, the map and
+  communities are rebuilt on the exact data (saved labels are dropped, so label afterwards).
+
+This needs Scopus entitlement: your institution's network or VPN, or an institutional token
+(`SCOPUS_INST_TOKEN`). It makes about one request per paper (one per 200 references); Elsevier
+sets a weekly quota per key, shown on the developer portal. Results are cached in
+`~/s3bib_runs/_scopus`, so an interrupted run continues where it stopped.
+
+```bash
+export SCOPUS_API_KEY="your-key"      # in your terminal, never in a chat
+s3bib report scopus.csv --scopus --map auto -o report.html
+```
 
 ```python
 res = s3bib.run_s3("scopus.csv", s3bib.S3Config(model_name="specter"))
@@ -128,7 +146,8 @@ from s3bib.mapchoice import compare_maps
 ch = compare_maps("scopus.csv", s3bib.S3Config(cache_dir="~/s3bib_cache"))
 ch["table"], ch["recommended"], ch["reasons"]
 res = s3bib.run_s3("scopus.csv", s3bib.S3Config(map_weights="auto"))   # compare, then run on the winner
-res.compare_maps(extended=True)    # on an existing run, with its (e.g. Scopus API) citation links
+s3bib.enrich_citations(res)        # exact Scopus reference lists, then
+res.compare_maps(refresh=True)     # compare the maps again on them
 ```
 
 ```bash
@@ -379,7 +398,8 @@ Close and reopen the Terminal (or PowerShell) window afterwards.
 
    Claude asks which language model to use (mpnet, the model of the S3 paper, is the default)
    and whether you have a Scopus API key for exact citations (optional; never paste a key into
-   the chat). The first run downloads the model (about 420 MB) and takes a few minutes; later
+   the chat). To use one, add it to the config above, next to `"args"`:
+   `"env": {"SCOPUS_API_KEY": "your-key"}`, and restart Claude Desktop. The first run downloads the model (about 420 MB) and takes a few minutes; later
    runs are fast.
 
 **If the tools do not appear**: Claude Desktop may not find `uvx`. In Terminal run
@@ -428,7 +448,7 @@ Then ask the same as above.
 | `compare_maps` | Before the analysis: compare the text map with text+coupling, text+cocitation and text+direct on your corpus and recommend one |
 | `run_s3_analysis` | Run S3 on a CSV/XLSX (year range, map option, strict citation matching); returns a `run_id` and a summary |
 | `list_embedding_models` | The language models you can choose (default: mpnet, as in the S3 paper) |
-| `enrich_citations` | Exact citations from the Scopus API (needs `SCOPUS_API_KEY` in the server's environment) |
+| `enrich_citations` | Exact, complete reference lists from the Scopus API: exact citations, and coupling from cited Scopus IDs (needs `SCOPUS_API_KEY` in the server's environment) |
 | `list_runs` | Saved runs |
 | `list_questions` | The ranked research questions for a level (1, 2 or 3) and whether your data supports each |
 | `answer_question` | Findings and tables for one question, e.g. `Q8` |
