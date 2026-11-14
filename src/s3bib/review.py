@@ -28,6 +28,8 @@ from .report import _col, _e, meta_line, page, q_section
 
 # What each answer means for the person writing the review.
 NOTES = {
+    "Q0": "Report which map you used and why: the rule was fixed before the analysis, so it is not a choice "
+          "made to fit the results.",
     "Q1": "Report the threshold and SII in your methods section; they show the map is not arbitrary.",
     "Q2": "Quote the silhouette and modularity when you describe how distinct the themes are.",
     "Q3": "Check these papers: drop off-topic ones from your corpus, or discuss them as a niche.",
@@ -85,7 +87,7 @@ SECTIONS = [
      ["Q11", "Q17", "Q22", "Q25", "Q26", "Q27", "Q28", "Q29", "Q33"]),
     ("methods", "7. Methods appendix",
      "A methods paragraph to adapt, a glossary, and the analyses that show the map can be trusted.",
-     ["Q1", "Q2", "Q38", "Q4", "Q35", "Q36", "Q24", "Q30", "Q31", "Q32", "Q34"]),
+     ["Q0", "Q1", "Q2", "Q38", "Q4", "Q35", "Q36", "Q24", "Q30", "Q31", "Q32", "Q34"]),
 ]
 
 GLOSSARY = [
@@ -266,6 +268,14 @@ def methods_text(res, level: int) -> str:
              f"title and abstract with the {model} sentence-transformer model and computed the cosine similarity "
              f"between all pairs of papers" + (", keeping only links from newer to older papers (time masking)."
                                                if cfg.temporal_mask else "."))
+    ch = res.map_choice
+    if ch is not None and len(ch["table"]):
+        s.append(f"Before the analysis we compared {len(ch['table'])} maps ({', '.join(ch['table']['map'])}): "
+                 f"{ch['holdout']:.0%} of the in-corpus citation links were hidden while the maps were built, and "
+                 "each map was scored on the hidden links that fall inside its communities, on text coherence (TCI) "
+                 "and stability, each against random communities of the same sizes where relevant. Following a "
+                 f"rule fixed in advance, the comparison recommended the {ch['recommended']} map"
+                 + (", which we used." if ch.get("auto") else "."))
     if cfg.map_weights:
         s.append(f"The map combined text similarity with citation relations ({map_label(cfg.map_weights)}), "
                  "an extension of the published method" +

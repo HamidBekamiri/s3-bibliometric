@@ -66,6 +66,7 @@ s3bib.S3Config(dedupe=False)                # keep duplicates
 s3bib.S3Config(mi_denominator="all")        # MI over all in-corpus links
 s3bib.S3Config(citation_match="strict")     # short titles need year + first author too
 s3bib.S3Config(map_weights="text+coupling") # one of four maps (below)
+s3bib.S3Config(map_weights="auto")          # compare the maps first, use the recommended one
 ```
 
 **Strict citation matching.** Matching titles inside References text can link a short,
@@ -100,6 +101,44 @@ map). Coupling and co-citation are Salton cosines (0–1). Because the citation 
 most pairs, the threshold scan matches link density: each threshold links as many pairs as
 one S3 threshold (0.75–0.85) on the same corpus, and SII picks the best, as for S3. Custom
 mixes also work, e.g. `map_weights={"s3": 0.5, "coupling": 0.5}`.
+
+**Which map? Compare them before the analysis.** `compare_maps` builds each candidate map
+(threshold scan and Leiden only, so it takes minutes, not a full run per map) and scores it
+on measures that do not favour one kind of map:
+
+| Measure | What it checks |
+|---|---|
+| **Held-out citations** | 20% of the in-corpus citation links are hidden while the maps are built. Share of hidden links that fall inside one community, minus the share for random communities of the same sizes. A citation map is not judged on its own input. |
+| **TCI gain over random** | Text coherence of the communities (paper Table 5) beyond random communities of the same sizes |
+| **Stability** | Adjusted Rand index with the partitions from two other seeds and two 90% samples of the papers |
+| **Coverage** | Share of papers placed in a community |
+| Agreement with text | Adjusted Rand index with the text map: how different the result is (reported, not used) |
+
+A rule fixed in advance recommends a map: keep the text map (the published method) unless a
+hybrid recovers at least 1 point more held-out citations beyond random, keeps the TCI gain
+(at most 0.005 lower), and loses at most 0.05 stability and 5 points coverage. Among the
+hybrids that pass, the highest held-out gain wins. The table also gives a 95% bootstrap interval
+(over the hidden links) of each map's difference from the text map, so you can see whether a win
+is larger than sampling noise. Relations that give a tie to fewer than 5% of the papers are left
+out, with the reason. `extended=True` also tries 10% and 50% citation
+weight and the significant-ties variants.
+
+```python
+from s3bib.mapchoice import compare_maps
+ch = compare_maps("scopus.csv", s3bib.S3Config(cache_dir="~/s3bib_cache"))
+ch["table"], ch["recommended"], ch["reasons"]
+res = s3bib.run_s3("scopus.csv", s3bib.S3Config(map_weights="auto"))   # compare, then run on the winner
+res.compare_maps(extended=True)    # on an existing run, with its (e.g. Scopus API) citation links
+```
+
+```bash
+s3bib compare-maps scopus.csv            # the table and the recommendation
+s3bib report scopus.csv --map auto       # compare, then the full report on the recommended map
+```
+
+The report shows the comparison as **Q0** at the top of the methods appendix, and the methods
+paragraph says which map was used and why. In Claude, the `compare_maps` tool runs it before
+`run_s3_analysis`.
 
 On the command line, `s3bib report scopus.csv` asks which model to use and whether to use the
 Scopus API; in Claude, the assistant asks the same two questions before the first run.
@@ -151,7 +190,7 @@ res.export_networks("networks/")      # node/edge CSVs (Neo4j, igraph) + GraphML
 
 | Level | What it adds | Questions |
 |---|---|---|
-| **1. S3** — the published method | The text-similarity map and what the S3 paper reports from it. Questions marked *S3 paper* are in the paper; *extension* questions use the same map. | **S3 paper:** Q1 threshold (SII) · Q2 structure quality · Q3 outliers · Q38 evaluation against coupling, BERTopic and random clusters (paper Tables 5–7) · Q5 communities · Q6 topics · Q7 core papers · Q8 local vs global foundations · Q10 citation flows, QI, MI (Tables 1–2). **Extensions:** Q9 closeness · Q11 knowledge gaps · Q12 bridges · Q13 growth · Q14 concepts · Q21–Q23 interdisciplinarity |
+| **1. S3** — the published method | The text-similarity map and what the S3 paper reports from it. Questions marked *S3 paper* are in the paper; *extension* questions use the same map. | **S3 paper:** Q1 threshold (SII) · Q2 structure quality · Q3 outliers · Q38 evaluation against coupling, BERTopic and random clusters (paper Tables 5–7) · Q5 communities · Q6 topics · Q7 core papers · Q8 local vs global foundations · Q10 citation flows, QI, MI (Tables 1–2). **Extensions:** Q0 which map to use (text alone or text plus citations) · Q9 closeness · Q11 knowledge gaps · Q12 bridges · Q13 growth · Q14 concepts · Q21–Q23 interdisciplinarity |
 | **2. Two-mode networks and knowledge graph** (default) | Authors, institutions, countries, journals, funders and references; the map options that mix in citation relations | Q4 agreement with coupling and co-citation · Q15–Q20 actors · Q35 layer overlap and projection check · Q36 homophily · Q37 citation direction |
 | **3. Prediction** (off unless asked) | Link prediction and graph neural networks | Q24–Q34 |
 
@@ -386,6 +425,7 @@ Then ask the same as above.
 
 | Tool | What it does |
 |---|---|
+| `compare_maps` | Before the analysis: compare the text map with text+coupling, text+cocitation and text+direct on your corpus and recommend one |
 | `run_s3_analysis` | Run S3 on a CSV/XLSX (year range, map option, strict citation matching); returns a `run_id` and a summary |
 | `list_embedding_models` | The language models you can choose (default: mpnet, as in the S3 paper) |
 | `enrich_citations` | Exact citations from the Scopus API (needs `SCOPUS_API_KEY` in the server's environment) |

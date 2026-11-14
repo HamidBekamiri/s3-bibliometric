@@ -552,3 +552,44 @@ def test_review_report_and_exports(res, tmp_path):
     assert "Bekamiri" in m and f"{res.best['threshold']:.2f}" in m
     pr = pd.read_csv(files["prisma.csv"])
     assert pr.iloc[0]["papers"] == len(res.papers) + len(res.removed)
+
+
+def test_map_choice(res, df, tmp_path):
+    """Q0: the maps are compared on held-out citations, TCI, stability and coverage, and a fixed
+    rule recommends one; map_weights="auto" runs on it."""
+    from s3bib.mapchoice import split_pairs
+    pairs = res.citation_pairs
+    train, test = split_pairs(pairs, 0.2, 42)
+    hidden = {tuple(p) for p in test}
+    assert not any((min(a, b), max(a, b)) in hidden for a, b in train)  # hidden links are not used
+    assert len(train) + sum(1 for a, b in pairs if (min(a, b), max(a, b)) in hidden) == len(pairs)
+
+    ch = res.compare_maps()
+    t = ch["table"].set_index("map")
+    assert "text" in t.index and ch["recommended"] in t.index and ch["n_heldout"] == len(test)
+    assert len(t) + len(ch["skipped"]) == 4
+    assert (t["coverage"].between(0, 1)).all() and (t["stability (ARI)"] <= 1).all()
+    assert t.loc["text", "agreement with text (ARI)"] == pytest.approx(1.0)
+    base = t.loc["text"]
+    # the rule: with a very high bar the text map is kept; with no bar the best held-out gain wins
+    from s3bib.mapchoice import _decide
+    strict = dict(ch["margins"], min_heldout_gain=1.0)
+    assert _decide(ch["table"], strict, True)[0] == "text"
+    loose = {"min_heldout_gain": -1, "tci_tolerance": 1, "max_stability_loss": 2, "max_coverage_loss": 1}
+    hybrids = t.drop(index="text")
+    if len(hybrids):
+        assert _decide(ch["table"], loose, True)[0] == hybrids["held-out citations gain"].idxmax()
+    assert _decide(ch["table"], ch["margins"], False)[0] == "text"  # no citations: keep text
+    if ch["recommended"] != "text":
+        r = t.loc[ch["recommended"]]
+        assert r["held-out citations gain"] >= base["held-out citations gain"] + ch["margins"]["min_heldout_gain"]
+
+    a = res.answer("Q0")
+    assert a.tables and a.chart and any("Recommended map" in f for f in a.findings)
+
+    auto = s3bib.run_s3(df, s3bib.S3Config(map_weights="auto"), **QUIET)
+    assert auto.map_choice["auto"] and auto.map_choice["recommended"] == ch["recommended"]
+    assert auto.config.map_weights == ch["weights"]
+    back = s3bib.S3Result.load(auto.save(tmp_path / "run"))
+    assert back.map_choice["recommended"] == ch["recommended"] and len(back.map_choice["table"]) == len(t)
+    assert "Before the analysis we compared" in auto.report(tmp_path / "auto.html").read_text()

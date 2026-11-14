@@ -1395,6 +1395,60 @@ def q_direction(res) -> Answer:
     return a
 
 
+def q_map_choice(res) -> Answer:
+    """Q0: which map to build the analysis on (s3bib.mapchoice)."""
+    from .hybrid import map_label
+    a = Answer("Q0", "")
+    ch = res.compare_maps()
+    t = ch["table"]
+    if not len(t):
+        a.findings.append("No map could be built for the comparison.")
+        return a
+    names = ", ".join(t["map"])
+    a.findings.append(f"Compared before the analysis: {names}. {ch['n_heldout']} of the in-corpus citation "
+                      f"links ({ch['holdout']:.0%}) were hidden while the maps were built, and each map is "
+                      "scored on how many of the hidden links fall inside one of its communities, beyond random "
+                      "communities of the same sizes. Text coherence (TCI gain over random), stability (ARI "
+                      "across seeds and 90% samples) and coverage are scored as well.")
+    a.findings.append("Decision rule, fixed in advance: " + ch["rule"])
+    rec = ch["recommended"]
+    a.findings.append(f"Recommended map: {rec}. " + " ".join(ch["reasons"][:1]))
+    a.findings.extend(ch["reasons"][1:])
+    used = map_label(res.config.map_weights) + (" (significant ties only)" if res.config.map_weights and
+                                                res.config.backbone else "")
+    want = map_label(ch["weights"]) + (" (significant ties only)" if ch["backbone"] else "")
+    if ch.get("auto"):
+        a.findings.append(f"This analysis was run on the recommended map ({want}), chosen automatically.")
+    elif used == want:
+        a.findings.append(f"This analysis uses the recommended map ({used}).")
+    else:
+        a.findings.append(f"This analysis uses {used}; the comparison recommends {want}. Run it again with "
+                          f"S3Config(map_weights=\"auto\") or --map auto to use the recommended map.")
+    for s in ch["skipped"]:
+        a.findings.append(f"Not compared: {s['map']}, {s['reason']}.")
+    if res.citation_source != "scopus_api":
+        a.findings.append("The citation links come from matching titles in the References text. Exact links "
+                          "from the Scopus API (enrich_citations) make the held-out test and the citation maps "
+                          "more reliable.")
+    show = t.drop(columns=[c for c in ("weights", "significant ties") if c in t])
+    cols = ["map", "held-out citations gain", "TCI gain over random", "stability (ARI)", "coverage",
+            "agreement with text (ARI)", "held-out vs text, CI low", "held-out vs text, CI high",
+            "papers with a tie", "communities", "papers clustered", "held-out citations recovered",
+            "held-out random (same sizes)", "stability across seeds", "stability on 90% samples",
+            "threshold", "silhouette (own map)"]
+    show = show[[c for c in cols if c in show]].copy()
+    num = [c for c in show.columns if c not in ("map", "communities", "papers clustered")]
+    show[num] = show[num].astype(float).round(3)
+    a.tables["Candidate maps compared before the analysis"] = show
+    a.chart = {"type": "bar", "title": "Held-out citations inside communities, gain over random",
+               "labels": show["map"].tolist(), "values": show["held-out citations gain"].fillna(0).tolist()}
+    a.charts.append({"type": "bar", "title": "Topic coherence: TCI gain over random clusters of the same sizes",
+                     "labels": show["map"].tolist(), "values": show["TCI gain over random"].fillna(0).tolist()})
+    a.charts.append({"type": "bar", "title": "Stability: agreement across seeds and 90% samples (ARI)",
+                     "labels": show["map"].tolist(), "values": show["stability (ARI)"].fillna(0).tolist()})
+    return a
+
+
 def q_evaluation(res) -> Answer:
     """Q38: the S3 paper's evaluation (Tables 5-7)."""
     from .evaluate import evaluate
@@ -1451,6 +1505,12 @@ def _pq(fn: str, res) -> Answer:
 
 
 QUESTIONS: List[Question] = [
+    Question("Q0", 1, "Recommended", "Which map should the analysis use: text alone or text plus citations?",
+             "Checks on your corpus, before the analysis, whether adding a citation relation gives better "
+             "communities than the published text-only map.",
+             "Text, text+coupling, text+co-citation and text+direct maps compared on held-out citations "
+             "(20% hidden while the maps are built), TCI gain over random, stability (ARI across seeds and "
+             "90% samples) and coverage, with a decision rule fixed in advance", ("references",), q_map_choice),
     Question("Q1", 1, "Essential", "What similarity threshold structures this field best?",
              "Shows the S3 threshold choice is data-driven, not arbitrary.",
              "Threshold scan 0.75-0.85, SII = silhouette × retained papers", (), q_threshold),

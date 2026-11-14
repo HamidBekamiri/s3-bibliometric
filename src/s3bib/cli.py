@@ -2,6 +2,8 @@
 
     s3bib report scopus.csv -o report.html
     s3bib report scopus.csv --model specter --scopus --threshold 0.78
+    s3bib compare-maps scopus.csv          which map to use, before the full analysis
+    s3bib report scopus.csv --map auto     compare the maps, then run on the recommended one
     s3bib models
     s3bib questions
 
@@ -57,7 +59,8 @@ def main(argv=None) -> None:
     r.add_argument("--map", default="text",
                    help="Which relations build the map: text (default: S3 text similarity, the published "
                         "method), text+coupling, text+cocitation or text+direct (75%% text + 25%% "
-                        "bibliographic coupling, co-citation or direct citation). Every result in the "
+                        "bibliographic coupling, co-citation or direct citation), or auto: compare these "
+                        "maps first (as in compare-maps) and use the recommended one. Every result in the "
                         "report follows this choice.")
     r.add_argument("--strict-citations", action="store_true",
                    help="Short titles (e.g. 'Introduction') only count as cited when year and first author match")
@@ -73,10 +76,28 @@ def main(argv=None) -> None:
                    help="review (default): brief, theme cards, research agenda, methods appendix; "
                         "questions: every question in order")
     r.add_argument("--save", help="Also save the run to this folder (reload with S3Result.load)")
+    r.add_argument("--cache-dir", default="~/s3bib_runs/_cache",
+                    help="Keep embeddings here, so compare-maps and report embed only once "
+                         "(default ~/s3bib_runs/_cache; '' to switch off)")
     qp = sub.add_parser("questions", help="List the ranked research questions")
     qp.add_argument("--prediction", action="store_true", help="Also list the prediction questions (Q24-Q34)")
     qp.add_argument("--level", type=int, choices=(1, 2, 3), default=2,
                     help="1 = the published S3 method; 2 = + two-mode and knowledge graph; 3 = + prediction")
+    cm = sub.add_parser("compare-maps", help="Compare the text map with text+coupling, text+cocitation and "
+                                             "text+direct on this corpus and recommend one")
+    cm.add_argument("csv")
+    cm.add_argument("--model", default="mpnet", help="Embedding model (default mpnet)")
+    cm.add_argument("--start-year", type=int)
+    cm.add_argument("--end-year", type=int)
+    cm.add_argument("--seed", type=int, default=42)
+    cm.add_argument("--extended", action="store_true",
+                    help="Also 10%% and 50%% citation weight and the significant-ties variants")
+    cm.add_argument("--holdout", type=float, default=0.2, help="Share of citation links hidden (default 0.2)")
+    cm.add_argument("--strict-citations", action="store_true")
+    cm.add_argument("-o", "--output", help="Also write the comparison table to this CSV file")
+    cm.add_argument("--cache-dir", default="~/s3bib_runs/_cache",
+                    help="Keep embeddings here, so compare-maps and report embed only once "
+                         "(default ~/s3bib_runs/_cache; '' to switch off)")
     sub.add_parser("models", help="List the embedding models you can choose")
     a = p.parse_args(argv)
 
@@ -94,6 +115,31 @@ def main(argv=None) -> None:
                   f"{'':<12} {m['description']}")
         return
 
+    if a.cmd == "compare-maps":
+        from .mapchoice import compare_maps
+        from .pipeline import S3Config
+        cfg = S3Config(model_name=a.model, start_year=a.start_year, end_year=a.end_year, seed=a.seed,
+                       citation_match="strict" if a.strict_citations else "lenient",
+                       cache_dir=a.cache_dir or None)
+        bar = lambda s, x: print(f"\r{x:4.0%}  {s:<50}", end="", file=sys.stderr)
+        ch = compare_maps(a.csv, cfg, extended=a.extended, holdout=a.holdout, progress=bar)
+        print(file=sys.stderr)
+        t = ch["table"].drop(columns=["weights", "significant ties"], errors="ignore")
+        cols = ["map", "held-out citations gain", "TCI gain over random", "stability (ARI)", "coverage",
+                "agreement with text (ARI)", "communities"]
+        print(t[[c for c in cols if c in t]].round(3).to_string(index=False))
+        print(f"\n{ch['n_heldout']} citation links hidden of {ch['n_links']}.")
+        for s in ch["skipped"]:
+            print(f"Not compared: {s['map']}, {s['reason']}.")
+        print(f"\nRule: {ch['rule']}")
+        print(f"\nRecommended map: {ch['recommended']}")
+        for r in ch["reasons"]:
+            print(f"  - {r}")
+        if a.output:
+            t.to_csv(a.output, index=False)
+            print(f"Table written to {a.output}")
+        return
+
     interactive = sys.stdin.isatty()
     model = a.model or (_ask_model() if interactive else "mpnet")
     use_scopus = a.scopus or (not a.no_scopus and interactive and _ask_scopus())
@@ -107,7 +153,7 @@ def main(argv=None) -> None:
                    community_method=a.method, dedupe=not a.no_dedupe, seed=a.seed,
                    map_weights=a.map, citation_match="strict" if a.strict_citations else "lenient",
                    prediction=a.prediction or a.level == 3, backbone=a.backbone,
-                   level=3 if a.prediction else a.level)
+                   level=3 if a.prediction else a.level, cache_dir=a.cache_dir or None)
     bar = lambda s, x: print(f"\r{x:4.0%}  {s:<50}", end="", file=sys.stderr)
     res = run_s3(a.csv, cfg, progress=bar)
     print(file=sys.stderr)

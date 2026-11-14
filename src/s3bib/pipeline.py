@@ -93,7 +93,8 @@ class S3Config:
     dedupe: bool = True                # remove duplicate records before the analysis
     dedupe_threshold: float = 0.98     # S3 at or above this = the same paper (reprints, double indexing)
     # Map: "text" (None, S3 similarity only: the published method), "text+coupling",
-    # "text+cocitation" or "text+direct" (75% text + 25% of that citation relation), or a dict.
+    # "text+cocitation" or "text+direct" (75% text + 25% of that citation relation), a dict, or
+    # "auto": compare these maps first (s3bib.mapchoice) and run on the recommended one.
     map_weights: Optional[Any] = None
     # Citation matching from References text: "lenient" (as in the S3 web app) or "strict"
     # (short titles such as "Introduction" also need the year and first author to match).
@@ -110,7 +111,10 @@ class S3Config:
     def __post_init__(self):
         from .hybrid import resolve_weights
         from .models import default_thresholds, resolve_model
-        self.map_weights = resolve_weights(self.map_weights)
+        if not (isinstance(self.map_weights, str) and self.map_weights.strip().lower() == "auto"):
+            self.map_weights = resolve_weights(self.map_weights)
+        else:
+            self.map_weights = "auto"
         if self.level not in (1, 2, 3):
             raise ValueError("level must be 1, 2 or 3")
         if self.citation_match not in ("lenient", "strict"):
@@ -512,6 +516,7 @@ class S3Result:
     labels: Dict[int, str] = field(default_factory=dict)  # human / LLM community labels
     removed: pd.DataFrame = field(default_factory=pd.DataFrame)  # dropped records and why
     citation_source: str = "references"  # "references" (title matching) or "scopus_api"
+    map_choice: Optional[Dict[str, Any]] = None  # comparison of the candidate maps (s3bib.mapchoice)
 
     # ---- graph & guided questions -----------------------------------------
     def s3(self, directed: bool = True) -> np.ndarray:
@@ -744,6 +749,21 @@ class S3Result:
         out.insert(0, "score", scores[order])
         return out
 
+    def compare_maps(self, extended: bool = False, holdout: float = 0.2, refresh: bool = False,
+                     progress: Optional[ProgressCallback] = None) -> Dict[str, Any]:
+        """Compare the text map with the hybrid maps on this corpus (s3bib.mapchoice), using
+        this run's citation links (exact ones after enrich_citations). Kept in map_choice."""
+        have = self.map_choice is not None and (not extended or self.map_choice.get("extended"))
+        if have and not refresh:
+            return self.map_choice
+        from .mapchoice import compare_prepared
+        set_seed(self.config.seed)
+        choice = compare_prepared(self.papers, self.embeddings, self.citation_pairs, self.config,
+                                  extended=extended, holdout=holdout, progress=progress)
+        choice["auto"] = bool(self.map_choice and self.map_choice.get("auto"))
+        self.map_choice = choice
+        return choice
+
     def summary(self, n_communities: int = 15) -> Dict[str, Any]:
         comms = self.communities()
         return {
@@ -768,6 +788,10 @@ class S3Result:
                 "labels": {str(k): v for k, v in self.labels.items()},
                 "citation_source": self.citation_source}
         (d / "run.json").write_text(json.dumps(meta, indent=2, default=_json_default))
+        if self.map_choice is not None:
+            from .mapchoice import to_jsonable
+            (d / "map_choice.json").write_text(json.dumps(to_jsonable(self.map_choice), indent=2,
+                                                          default=_json_default))
         return d
 
     @classmethod
@@ -784,7 +808,8 @@ class S3Result:
                    citation_pairs=[tuple(p) for p in meta["citation_pairs"]],
                    labels={int(k): v for k, v in meta.get("labels", {}).items()},
                    removed=pd.read_pickle(d / "removed.pkl") if (d / "removed.pkl").exists() else pd.DataFrame(),
-                   citation_source=meta.get("citation_source", "references"))
+                   citation_source=meta.get("citation_source", "references"),
+                   map_choice=_load_choice(d))
 
     def export(self, directory: Union[str, Path]) -> Dict[str, str]:
         """Write human-friendly CSV/XLSX outputs."""
@@ -815,11 +840,30 @@ class S3Result:
 def run_s3(source: Union[str, Path, pd.DataFrame],
            config: Optional[S3Config] = None,
            progress: Optional[ProgressCallback] = None) -> S3Result:
-    """Run the full S3 pipeline on a Scopus export and return an S3Result."""
+    """Run the full S3 pipeline on a Scopus export and return an S3Result.
+    S3Config(map_weights="auto") first compares the candidate maps (s3bib.mapchoice) and
+    runs on the recommended one; the comparison is kept in S3Result.map_choice."""
     cfg = config or S3Config()
     say = progress or (lambda s, p: log.info("%s (%.0f%%)", s, p * 100))
     set_seed(cfg.seed)
+    df, emb, removed = prepare(source, cfg, say)
+    n = len(df)
 
+    choice = None
+    if cfg.map_weights == "auto":  # compare the maps first, then run on the recommended one
+        from dataclasses import replace
+        from .mapchoice import compare_prepared
+        pairs0 = citation_edges(df, strict=cfg.citation_match == "strict")
+        choice = compare_prepared(df, emb, pairs0, cfg,
+                                  progress=lambda s, p: say(f"Choosing the map: {s}", 0.5))
+        choice["auto"] = True
+        cfg = replace(cfg, map_weights=choice["weights"], backbone=cfg.backbone or choice["backbone"])
+        set_seed(cfg.seed)
+    return _run_prepared(df, emb, removed, cfg, say, choice)
+
+
+def prepare(source: Union[str, Path, pd.DataFrame], cfg: S3Config, say: ProgressCallback):
+    """Load, drop empty records, embed and de-duplicate: (papers, embeddings, removed rows)."""
     say("Loading papers", 0.0)
     df = load_papers(source, cfg.start_year, cfg.end_year, drop_empty=False)
     empty = (df["title"] == "") & (df["abstract"] == "")
@@ -839,8 +883,12 @@ def run_s3(source: Union[str, Path, pd.DataFrame],
         removed += rem
         keep = np.setdiff1d(np.arange(len(df)), drop)
         df, emb = df.iloc[keep].reset_index(drop=True), emb[keep]
-    n = len(df)
+    return df, emb, removed
 
+
+def _run_prepared(df: pd.DataFrame, emb: np.ndarray, removed: List[Dict[str, Any]], cfg: S3Config,
+                  say: ProgressCallback, choice: Optional[Dict[str, Any]] = None) -> S3Result:
+    n = len(df)
     say("Computing S3 matrix", 0.5)
     years = df["year"].to_numpy(dtype=float)
     thresholds = cfg.thresholds
@@ -913,12 +961,20 @@ def run_s3(source: Union[str, Path, pd.DataFrame],
 
     say("Done", 1.0)
     return S3Result(papers=df, embeddings=emb, scan=scan, best=best,
-                    config=cfg, citation_pairs=pairs, removed=pd.DataFrame(removed))
+                    config=cfg, citation_pairs=pairs, removed=pd.DataFrame(removed), map_choice=choice)
 
 
 # --------------------------------------------------------------------------
 # helpers
 # --------------------------------------------------------------------------
+def _load_choice(d: Path) -> Optional[Dict[str, Any]]:
+    f = d / "map_choice.json"
+    if not f.exists():
+        return None
+    from .mapchoice import from_jsonable
+    return from_jsonable(json.loads(f.read_text()))
+
+
 def _renumber(s: pd.Series) -> pd.Series:
     """Renumber communities 0..k-1 by size (0 = largest)."""
     order = s.value_counts().index.tolist()

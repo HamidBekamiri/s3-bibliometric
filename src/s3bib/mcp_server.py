@@ -46,7 +46,9 @@ mcp = _Server(
         "is mpnet, the model of the published S3 paper), and (2) whether they want exact "
         "citations from the Scopus API (needs SCOPUS_API_KEY set in this MCP server's "
         "environment; never ask the user to paste a key into the chat). "
-        "Typical flow: run_s3_analysis on a Scopus CSV -> enrich_citations if the user wants "
+        "Typical flow: compare_maps on the Scopus CSV if it has References (offer it: it says whether "
+        "text alone or text plus a citation relation gives the better map) -> run_s3_analysis with the "
+        "map the user picks -> enrich_citations if the user wants "
         "exact citations -> get_community for each main "
         "community and save_community_labels with short labels -> list_questions shows "
         "the ranked research questions (Q1-Q23 and Q35-Q37; Q24-Q34 prediction when asked) this dataset can answer -> "
@@ -118,7 +120,8 @@ def run_s3_analysis(
     are removed unless remove_duplicates=False. map_relations chooses the map, and every
     answer and report follows it: "text" (default; S3 text similarity, the published method),
     "text+coupling", "text+cocitation" or "text+direct" (75% text + 25% bibliographic
-    coupling, co-citation or direct citation). strict_citations=True
+    coupling, co-citation or direct citation), or "auto" (compare them first, as compare_maps
+    does, and use the recommended one). strict_citations=True
     stops short titles such as "Introduction" from matching unrelated references.
     significant_ties_only=True keeps only coupling, co-citation and co-authorship ties that are
     significant under a degree-preserving null model (in the map and Q35-Q37). Can take several minutes
@@ -154,6 +157,37 @@ def run_s3_analysis(
     if len(res.removed):
         out["removed_records"] = res.removed["reason"].value_counts().to_dict()
     return out
+
+
+@mcp.tool()
+def compare_maps(csv_path: str, embedding_model: str = "mpnet", start_year: Optional[int] = None,
+                 end_year: Optional[int] = None, seed: int = 42, extended: bool = False,
+                 strict_citations: bool = False) -> Dict[str, Any]:
+    """Before the full analysis: which map should S3 use for this corpus? Compares the text map
+    (the published method) with text+coupling, text+cocitation and text+direct (extended=True adds
+    10% and 50% citation weights and significant-ties variants). 20% of the in-corpus citation
+    links are hidden while the maps are built; each map is scored on the hidden links inside its
+    communities (gain over random communities of the same sizes), on text coherence (TCI gain over
+    random), stability (ARI across seeds and 90% samples) and coverage. A rule fixed in advance
+    recommends a map. Show the user the table and the recommendation, then pass the chosen map to
+    run_s3_analysis as map_relations. Takes a few minutes; embeddings are cached for the run."""
+    from .mapchoice import compare_maps as _compare
+    p = Path(csv_path).expanduser()
+    if not p.exists():
+        raise ValueError(f"File not found: {p}")
+    cfg = S3Config(start_year=start_year, end_year=end_year, seed=seed, cache_dir=str(HOME / "_cache"),
+                   model_name=embedding_model, citation_match="strict" if strict_citations else "lenient")
+    ch = _compare(p, cfg, extended=extended)
+    t = ch["table"].drop(columns=["weights", "significant ties"], errors="ignore").round(4)
+    w = ch["weights"]
+    if ch["recommended"] in ("text", "text+coupling", "text+cocitation", "text+direct"):
+        map_arg = ch["recommended"]
+    else:  # e.g. "text+coupling 50%": pass the weights
+        map_arg = ",".join(f"{k}={v:g}" for k, v in (w or {"s3": 1}).items())
+    return {"table": json.loads(t.to_json(orient="records")), "recommended": ch["recommended"],
+            "map_relations": map_arg, "significant_ties_only": ch["backbone"],
+            "reasons": ch["reasons"], "rule": ch["rule"], "skipped": ch["skipped"],
+            "citation_links": ch["n_links"], "hidden_links": ch["n_heldout"]}
 
 
 @mcp.tool()

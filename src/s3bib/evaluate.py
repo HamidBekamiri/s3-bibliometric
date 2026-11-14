@@ -73,12 +73,17 @@ def random_partition(labels: np.ndarray, seed: int) -> np.ndarray:
     return out
 
 
-def _tfidf(res):
+def tfidf_matrix(df: pd.DataFrame):
+    """L1-normalised TF-IDF word distributions of the papers (for TCI)."""
     from sklearn.feature_extraction.text import TfidfVectorizer
     from sklearn.preprocessing import normalize
     X = TfidfVectorizer(stop_words="english", min_df=2, token_pattern=r"(?u)\b[a-zA-Z][a-zA-Z-]+\b") \
-        .fit_transform(res.papers["text"].fillna(""))
+        .fit_transform(df["text"].fillna(""))
     return normalize(X, norm="l1").tocsr()
+
+
+def _tfidf(res):
+    return tfidf_matrix(res.papers)
 
 
 def tci(P, labels: np.ndarray) -> float:
