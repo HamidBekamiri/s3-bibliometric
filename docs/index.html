@@ -74,6 +74,12 @@ h1{font-size:clamp(1.8rem,4vw,2.6rem);line-height:1.1;letter-spacing:-.01em}
 .parts{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-top:14px}
 .part{background:rgba(255,255,255,.12);border-radius:10px;padding:10px 12px;font-size:.9rem}
 .part b{display:block;font-family:var(--display);font-size:.98rem;margin-bottom:2px}
+.levels{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:8px}
+.levels-label{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600;margin:24px 0 0}
+.lv{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:.88rem;min-width:0}
+.lv b{font-family:var(--display);display:block;font-size:1rem}
+.lv .pill{display:inline-block;font-size:.7rem;font-weight:600;border-radius:99px;padding:1px 8px;margin-bottom:6px}
+.l1 .pill{background:var(--teal-soft);color:var(--teal)}.l2 .pill{background:var(--plum-soft);color:var(--plum)}.l3 .pill{background:var(--amber-soft);color:var(--amber)}
 .refs{margin-top:16px;font-size:.88rem;color:var(--muted);display:flex;flex-direction:column;gap:4px;border-left:3px solid var(--teal);padding:2px 0 2px 12px;max-width:80ch}
 .refs a{color:var(--teal)}
 @media (max-width:860px){
@@ -222,6 +228,13 @@ files.download("s3_report.html")</span><button class="copy" type="button">Copy</
         <div class="part"><b>Downloads</b>Reading lists for Zotero, EndNote or Mendeley (RIS, BibTeX), themes table, PRISMA counts.</div>
       </div>
     </section>
+  </div>
+
+  <p class="levels-label" id="lvl">Levels of analysis</p>
+  <div class="levels" aria-labelledby="lvl">
+    <div class="lv l1"><span class="pill">Level 1</span><b>The published S3 method</b>Themes, central and foundational papers, citation flows, gaps, growth.</div>
+    <div class="lv l2"><span class="pill">Level 2 · default</span><b>+ Who and where</b>Authors, countries, journals, funders and citation networks.</div>
+    <div class="lv l3"><span class="pill">Level 3 · when you ask</span><b>+ Predictions</b>Which gaps will close, which themes will grow, who will collaborate.</div>
   </div>
 
 </div>
