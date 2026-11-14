@@ -51,7 +51,7 @@ LEVEL2 = {"Q4", "Q15", "Q16", "Q17", "Q18", "Q19", "Q20", "Q35", "Q36", "Q37"}
 PUBLISHED = {"Q1", "Q2", "Q3", "Q5", "Q6", "Q7", "Q8", "Q10", "Q38"}
 # The S3 project (method, paper, app and proposals for new analyses) and this library's code.
 S3_PROJECT = "https://github.com/AI-Growth-Lab/S3"
-S3_LIBRARY = "https://github.com/HamidBekamiri/s3-bibliometric"
+S3_LIBRARY = "https://github.com/AI-Growth-Lab/s3-bibliometric"
 S3_DOI = "https://doi.org/10.1016/j.jbusres.2026.116582"
 S3_PAPER = ("Bekamiri, H., Østergaard, C. R., & Timmermans, B. (2027). Semantic similarity score: "
             "A new method for mapping intellectual structures in business research. Journal of "

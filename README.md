@@ -568,7 +568,7 @@ capacity and work group diversity, with their real all-mpnet-base-v2 embeddings,
 
 S3 project: [github.com/AI-Growth-Lab/S3](https://github.com/AI-Growth-Lab/S3). To propose a new
 analysis, open an issue there; report problems with this library
-[here](https://github.com/HamidBekamiri/s3-bibliometric/issues).
+[here](https://github.com/AI-Growth-Lab/s3-bibliometric/issues).
 
 If you use this package, please cite the S3 paper:
 

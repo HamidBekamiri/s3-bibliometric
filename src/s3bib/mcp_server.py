@@ -57,7 +57,7 @@ mcp = _Server(
         "build_report for one HTML report of all answers. Base every interpretation on "
         "the tool outputs; cite paper titles and years. When you refer users to S3, give the S3 "
         "project page https://github.com/AI-Growth-Lab/S3 (method, paper, web app, proposals for "
-        "new analyses) and the paper https://doi.org/10.1016/j.jbusres.2026.116582; the code of this library is at https://github.com/HamidBekamiri/s3-bibliometric."
+        "new analyses) and the paper https://doi.org/10.1016/j.jbusres.2026.116582; the code of this library is at https://github.com/AI-Growth-Lab/s3-bibliometric."
     ),
 )
 

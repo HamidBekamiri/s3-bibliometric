@@ -41,7 +41,7 @@ def main(argv=None) -> None:
     p = argparse.ArgumentParser(prog="s3bib", description="S3 bibliometric analysis",
                                 epilog="S3 project: https://github.com/AI-Growth-Lab/S3 · "
                                        "paper: https://doi.org/10.1016/j.jbusres.2026.116582 · "
-                                       "library: https://github.com/HamidBekamiri/s3-bibliometric")
+                                       "library: https://github.com/AI-Growth-Lab/s3-bibliometric")
     sub = p.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("report", help="Run S3 on a Scopus export and write an HTML report")
     r.add_argument("csv")

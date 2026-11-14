@@ -787,7 +787,7 @@ def page(title: str, header: str, body: str) -> str:
 <div class="tv-global">Show results as <button type="button" data-v="chart" onclick="s3TVAll('chart')">Charts</button><button type="button" data-v="table" onclick="s3TVAll('table')">Tables</button></div>
 <script>document.querySelectorAll('.tv-global button').forEach(x=>x.classList.toggle('on',x.dataset.v===s3TVPref()));</script>
 {body}
-<footer>S3 (Semantic Similarity Score) bibliometric method · S3 project: <a href="{S3_PROJECT}">github.com/AI-Growth-Lab/S3</a> · Paper: <a href="{S3_DOI}">doi.org/10.1016/j.jbusres.2026.116582</a> · Library: <a href="{S3_LIBRARY}">github.com/HamidBekamiri/s3-bibliometric</a></footer>
+<footer>S3 (Semantic Similarity Score) bibliometric method · S3 project: <a href="{S3_PROJECT}">github.com/AI-Growth-Lab/S3</a> · Paper: <a href="{S3_DOI}">doi.org/10.1016/j.jbusres.2026.116582</a> · Library: <a href="{S3_LIBRARY}">github.com/AI-Growth-Lab/s3-bibliometric</a></footer>
 </div></body></html>"""
 
 

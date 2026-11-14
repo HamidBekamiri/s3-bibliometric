@@ -37,8 +37,8 @@ bertopic = ["bertopic"]  # adds BERTopic to the evaluation (Q38)
 Homepage = "https://github.com/AI-Growth-Lab/S3"
 Paper = "https://doi.org/10.1016/j.jbusres.2026.116582"
 "Propose an analysis" = "https://github.com/AI-Growth-Lab/S3/issues"
-"Library source" = "https://github.com/HamidBekamiri/s3-bibliometric"
-"Library issues" = "https://github.com/HamidBekamiri/s3-bibliometric/issues"
+"Library source" = "https://github.com/AI-Growth-Lab/s3-bibliometric"
+"Library issues" = "https://github.com/AI-Growth-Lab/s3-bibliometric/issues"
 
 [project.scripts]
 s3-bibliometric = "s3bib.mcp_server:main"
