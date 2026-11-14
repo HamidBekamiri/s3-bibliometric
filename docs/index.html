@@ -74,8 +74,8 @@ h1{font-size:clamp(1.8rem,4vw,2.6rem);line-height:1.1;letter-spacing:-.01em}
 .parts{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-top:14px}
 .part{background:rgba(255,255,255,.12);border-radius:10px;padding:10px 12px;font-size:.9rem}
 .part b{display:block;font-family:var(--display);font-size:.98rem;margin-bottom:2px}
-footer{margin-top:28px;font-size:.85rem;color:var(--muted);display:flex;flex-direction:column;gap:6px}
-footer a{color:var(--teal)}
+.refs{margin-top:16px;font-size:.88rem;color:var(--muted);display:flex;flex-direction:column;gap:4px;border-left:3px solid var(--teal);padding:2px 0 2px 12px;max-width:80ch}
+.refs a{color:var(--teal)}
 @media (max-width:860px){
   .fork{grid-template-columns:1fr;padding-top:0}
   .fork::before,.merge::before{display:none}
@@ -93,6 +93,10 @@ footer a{color:var(--teal)}
     <span class="fact">Runs on <b>your computer</b>, or in <b>Google Colab</b></span>
     <span class="fact">First run downloads a <b>420 MB</b> language model (a few minutes)</span>
     <span class="fact">Version <b>0.14.0</b></span>
+  </div>
+  <div class="refs" aria-label="Code, package and method">
+    <span>Code and full guide: <a href="https://github.com/HamidBekamiri/s3-bibliometric">github.com/HamidBekamiri/s3-bibliometric</a> · Package: <a href="https://pypi.org/project/s3-bibliometric/">pypi.org/project/s3-bibliometric</a></span>
+    <span>Method: Bekamiri, H., Østergaard, C. R., &amp; Timmermans, B. (2027). Semantic similarity score: A new method for mapping intellectual structures in business research. <i>Journal of Business Research</i>, 219, 116582.</span>
   </div>
 
   <div class="flow">
@@ -220,10 +224,6 @@ files.download("s3_report.html")</span><button class="copy" type="button">Copy</
     </section>
   </div>
 
-  <footer>
-    <span>Code and full guide: <a href="https://github.com/HamidBekamiri/s3-bibliometric">github.com/HamidBekamiri/s3-bibliometric</a> · Package: <a href="https://pypi.org/project/s3-bibliometric/">pypi.org/project/s3-bibliometric</a></span>
-    <span>Method: Bekamiri, H., Østergaard, C. R., &amp; Timmermans, B. (2027). Semantic similarity score: A new method for mapping intellectual structures in business research. <i>Journal of Business Research</i>, 219, 116582.</span>
-  </footer>
 </div>
 
 <script>
