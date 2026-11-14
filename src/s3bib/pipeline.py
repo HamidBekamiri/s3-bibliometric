@@ -1,6 +1,7 @@
 """
 Core S3 (Semantic Similarity Score) bibliometric pipeline, following the published
-method (Bekamiri, Østergaard & Timmermans, Journal of Business Research 219, 116582):
+method (Bekamiri, Østergaard & Timmermans, Journal of Business Research 219, 116582,
+https://doi.org/10.1016/j.jbusres.2026.116582):
 
   1. Load a Scopus export (Title + Abstract required).
   2. Embed "Title. Abstract" with sentence-transformers/all-mpnet-base-v2.

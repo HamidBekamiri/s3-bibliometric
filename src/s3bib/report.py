@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import pandas as pd
 
-from .questions import QUESTIONS, PLANNED, S3_LIBRARY, S3_PROJECT, STAGES, answer, available
+from .questions import QUESTIONS, PLANNED, S3_DOI, S3_LIBRARY, S3_PROJECT, STAGES, answer, available
 
 # One colour per community (community 0 = largest); grey for communities outside the top 10.
 PALETTE = ["#0f6b74", "#c2672c", "#5b5fa8", "#3f8f4e", "#b8456b", "#8a7a2c", "#4f7fb3", "#7a5c99",
@@ -787,7 +787,7 @@ def page(title: str, header: str, body: str) -> str:
 <div class="tv-global">Show results as <button type="button" data-v="chart" onclick="s3TVAll('chart')">Charts</button><button type="button" data-v="table" onclick="s3TVAll('table')">Tables</button></div>
 <script>document.querySelectorAll('.tv-global button').forEach(x=>x.classList.toggle('on',x.dataset.v===s3TVPref()));</script>
 {body}
-<footer>S3 (Semantic Similarity Score) bibliometric method · S3 project: <a href="{S3_PROJECT}">github.com/AI-Growth-Lab/S3</a> · Library: <a href="{S3_LIBRARY}">github.com/HamidBekamiri/s3-bibliometric</a></footer>
+<footer>S3 (Semantic Similarity Score) bibliometric method · S3 project: <a href="{S3_PROJECT}">github.com/AI-Growth-Lab/S3</a> · Paper: <a href="{S3_DOI}">doi.org/10.1016/j.jbusres.2026.116582</a> · Library: <a href="{S3_LIBRARY}">github.com/HamidBekamiri/s3-bibliometric</a></footer>
 </div></body></html>"""
 
 

@@ -1,7 +1,8 @@
 # S3 Bibliometric
 
 > **S3 project: [github.com/AI-Growth-Lab/S3](https://github.com/AI-Growth-Lab/S3)**: the method,
-> the paper, the S3 web app and proposals for new analyses. This repository holds the code of the
+> the paper, the S3 web app and proposals for new analyses.
+> **Paper: [doi.org/10.1016/j.jbusres.2026.116582](https://doi.org/10.1016/j.jbusres.2026.116582)**. This repository holds the code of the
 > `s3-bibliometric` Python library and MCP server.
 
 **Semantic Similarity Score (S3): a bibliometric method for mapping intellectual
@@ -21,7 +22,7 @@ or the visual guides: [S3 step by step](https://hamidbekamiri.github.io/s3-bibli
 
 The library follows the published method: Bekamiri, Østergaard & Timmermans (2027),
 *Semantic similarity score: A new method for mapping intellectual structures in business
-research*, Journal of Business Research 219, 116582.
+research*, Journal of Business Research 219, 116582. https://doi.org/10.1016/j.jbusres.2026.116582
 
 1. Embed each paper's `Title. Abstract` with `sentence-transformers/all-mpnet-base-v2`
 2. **S3 matrix** = cosine similarity between all papers, time-masked so links run from

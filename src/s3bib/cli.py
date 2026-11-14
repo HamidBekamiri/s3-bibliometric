@@ -40,6 +40,7 @@ def _ask_scopus() -> bool:
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(prog="s3bib", description="S3 bibliometric analysis",
                                 epilog="S3 project: https://github.com/AI-Growth-Lab/S3 · "
+                                       "paper: https://doi.org/10.1016/j.jbusres.2026.116582 · "
                                        "library: https://github.com/HamidBekamiri/s3-bibliometric")
     sub = p.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("report", help="Run S3 on a Scopus export and write an HTML report")
@@ -177,7 +178,7 @@ def main(argv=None) -> None:
     out = res.report(a.output, a.title, prediction=True if a.prediction else None,
                      level=3 if a.prediction else a.level, layout=a.layout)
     print(f"Report written to {out}")
-    print("S3 project: https://github.com/AI-Growth-Lab/S3", file=sys.stderr)
+    print("S3 project: https://github.com/AI-Growth-Lab/S3 · paper: https://doi.org/10.1016/j.jbusres.2026.116582", file=sys.stderr)
 
 
 if __name__ == "__main__":
