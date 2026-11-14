@@ -8,8 +8,8 @@ Give it a Scopus export. It finds the research communities of the field, their c
 papers, outliers, and the citation flows between communities. Your AI assistant can then
 label the communities and write up the intellectual structure.
 
-**No coding needed**: see [Use it without coding: Claude or ChatGPT](#use-it-without-coding-claude-or-chatgpt)
-for step-by-step setup with Claude Desktop, Claude Code, Claude.ai or ChatGPT.
+**No coding needed**: see [Use it without coding: Claude, ChatGPT or Colab](#use-it-without-coding-claude-chatgpt-or-colab)
+for step-by-step setup with Claude Desktop, Claude Code, Claude.ai, ChatGPT or a Google Colab notebook.
 
 ## How S3 works
 
@@ -336,16 +336,17 @@ community (the top 10, five per row): 30 words each by default, 10 to 50 with on
 In Claude, use the **`s3_guided`** prompt, or ask: *"Walk me through the S3 questions for
 my Scopus file."*
 
-## Use it without coding: Claude or ChatGPT
+## Use it without coding: Claude, ChatGPT or Colab
 
-S3 runs on your own computer, so your data stays with you. How you talk to it depends on
-your app:
+S3 runs on your own computer, so your data stays with you, or in a Google Colab notebook in
+your browser. How you use it depends on your app:
 
 | Your app | How | Setup |
 |---|---|---|
 | **Claude Desktop** (Mac, Windows) | Chat with S3 directly: Claude runs the analysis and explains it | Once: install uv, paste 6 lines into Claude's settings |
 | **Claude Code** | Same, from the terminal | Once: install uv, one command |
 | **Claude.ai (browser, phone) or ChatGPT** | Make the report with one command, then upload it to the chat | Once: install uv |
+| **Google Colab** (browser) or Jupyter | Paste three cells into a notebook; it runs S3 and downloads the report | Nothing to install in Colab |
 
 Claude.ai in the browser and ChatGPT cannot start programs on your computer, so they cannot
 run S3 themselves; they can read and explain the report and files S3 makes.
@@ -430,6 +431,53 @@ Then ask the same as above.
    > This is an S3 analysis of my literature. Name each theme in 3-5 words, summarise the
    > field's structure, and draft the structure of my literature review with the gaps to
    > discuss.
+
+### Step 2d: a Google Colab notebook (or Jupyter)
+
+Nothing to install: Colab runs Python in your browser, on Google's servers. Skip step 1.
+
+1. Open [colab.research.google.com](https://colab.research.google.com) → **New notebook**.
+   Optional: **Runtime → Change runtime type → T4 GPU** makes the embedding faster.
+2. In the first cell, install S3 and press ▶ (or Shift+Enter):
+   ```python
+   !pip install -q s3-bibliometric
+   ```
+3. In a new cell, upload your Scopus CSV (pick the file when asked):
+   ```python
+   from google.colab import files
+   csv = list(files.upload())[0]
+   ```
+4. In a new cell, run S3 and download the report. `map_weights="auto"` first compares the
+   maps (text alone or text plus a citation relation) and uses the recommended one:
+   ```python
+   import s3bib
+   res = s3bib.run_s3(csv, s3bib.S3Config(map_weights="auto"))
+   print(res.answer("Q0"))            # the map comparison and the map used
+   res.report("s3_report.html")       # add level=1 for only the published S3 method
+   files.download("s3_report.html")
+   ```
+   The first run downloads the language model (about 420 MB). Then open the report and use it
+   as in step 2c, or keep asking in the notebook, e.g. `print(res.answer("Q8"))` or
+   `res.questions()` for the list of questions.
+
+Notes:
+
+- Colab runs on Google's servers, so your file is uploaded there. A free Colab session ends
+  after a while; download the report before you close it.
+- **Scopus API key in Colab**: click the key icon (**Secrets**), add `SCOPUS_API_KEY`, allow
+  the notebook to use it, and run this before the report:
+  ```python
+  import os
+  from google.colab import userdata
+  os.environ["SCOPUS_API_KEY"] = userdata.get("SCOPUS_API_KEY")
+  s3bib.enrich_citations(res)
+  ```
+  Reference lists need your institution's Scopus access, and Google's servers are not on your
+  campus network, so this usually also needs an institutional token (`SCOPUS_INST_TOKEN`,
+  from your library), stored the same way.
+- **Jupyter on your own computer**: install with `pip install s3-bibliometric` in your
+  environment, skip the upload cell, and use the file path, e.g.
+  `csv = "/Users/you/Downloads/scopus.csv"`; open `s3_report.html` instead of downloading it.
 
 ### What you can ask
 
