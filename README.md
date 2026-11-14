@@ -1,5 +1,9 @@
 # S3 Bibliometric
 
+> **S3 project: [github.com/AI-Growth-Lab/S3](https://github.com/AI-Growth-Lab/S3)**: the method,
+> the paper, the S3 web app and proposals for new analyses. This repository holds the code of the
+> `s3-bibliometric` Python library and MCP server.
+
 **Semantic Similarity Score (S3): a bibliometric method for mapping intellectual
 structures**, packaged as a free Python library and an MCP server that LLM assistants
 (Claude, and any other MCP client) can call.
@@ -560,6 +564,10 @@ capacity and work group diversity, with their real all-mpnet-base-v2 embeddings,
 `tests/data/`. `python tests/data/build_openalex_sample.py` rebuilds them.
 
 ## Citation
+
+S3 project: [github.com/AI-Growth-Lab/S3](https://github.com/AI-Growth-Lab/S3). To propose a new
+analysis, open an issue there; report problems with this library
+[here](https://github.com/HamidBekamiri/s3-bibliometric/issues).
 
 If you use this package, please cite the S3 paper:
 

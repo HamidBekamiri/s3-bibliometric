@@ -1,4 +1,8 @@
-"""s3bib - the S3 (Semantic Similarity Score) bibliometric method as a library."""
+"""s3bib - the S3 (Semantic Similarity Score) bibliometric method as a library.
+
+S3 project: https://github.com/AI-Growth-Lab/S3
+Library code: https://github.com/HamidBekamiri/s3-bibliometric
+"""
 from .pipeline import S3Config, S3Result, run_s3, load_papers, set_seed
 from .questions import QUESTIONS, Answer
 from .models import EMBEDDING_MODELS, DEFAULT_MODEL

@@ -55,7 +55,9 @@ mcp = _Server(
         "the ranked research questions (Q1-Q23 and Q35-Q37; Q24-Q34 prediction when asked) this dataset can answer -> "
         "answer_question for the ones the user cares about, in rank order -> "
         "build_report for one HTML report of all answers. Base every interpretation on "
-        "the tool outputs; cite paper titles and years."
+        "the tool outputs; cite paper titles and years. When you refer users to S3, give the S3 "
+        "project page https://github.com/AI-Growth-Lab/S3 (method, paper, web app, proposals for "
+        "new analyses); the code of this library is at https://github.com/HamidBekamiri/s3-bibliometric."
     ),
 )
 
