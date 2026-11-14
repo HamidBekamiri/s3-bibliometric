@@ -153,7 +153,8 @@ on measures that do not favour one kind of map:
 A rule fixed in advance recommends a map: keep the text map (the published method) unless a
 hybrid raises **both** the silhouette on the text embeddings (paper Table 6) and the QI on the
 held-out citation links (paper Table 7, counted on links the map did not see), keeps the TCI
-gain (at most 0.005 lower), and loses at most 0.05 stability and 5 points coverage. Among the
+gain (at most 0.005 lower), loses at most 0.05 stability, and clusters at most 10% fewer papers
+than the text map (smaller, tighter communities always score higher, so coverage is guarded). Among the
 hybrids that pass, the highest held-out QI wins. The table also gives a 95% bootstrap interval
 (over the hidden links) of each map's difference from the text map, so you can see whether a win
 is larger than sampling noise. Relations that give a tie to fewer than 5% of the papers are left

@@ -25,8 +25,8 @@ maps scan thresholds that give the same numbers of links as the text scan.
 
 Rule (RULE below): keep the text map unless a hybrid raises both the silhouette on the text
 embeddings and the QI on the held-out citation links, keeps the TCI gain (at most
-`tci_tolerance` lower), and loses at most `max_stability_loss` stability and
-`max_coverage_loss` coverage. Among the hybrids that pass, the one with the highest held-out
+`tci_tolerance` lower), loses at most `max_stability_loss` stability, and clusters at most
+`max_coverage_loss` (10%) fewer papers than the text map. Among the hybrids that pass, the one with the highest held-out
 QI is recommended. run_s3 uses this choice by default (S3Config(map_weights="auto")).
 """
 from __future__ import annotations
@@ -38,12 +38,13 @@ import pandas as pd
 
 ProgressCallback = Callable[[str, float], None]
 
-MARGINS = {"tci_tolerance": 0.005, "max_stability_loss": 0.05, "max_coverage_loss": 0.05}
+# max_coverage_loss is relative: the share of the text map's clustered papers a hybrid may lose
+MARGINS = {"tci_tolerance": 0.005, "max_stability_loss": 0.05, "max_coverage_loss": 0.10}
 RULE = ("Keep the text map (the published S3 method) unless a hybrid map raises both the silhouette on "
         "the text embeddings and the QI on the held-out citation links above the text map's, keeps its TCI "
-        "gain over random no more than {tci_tolerance:g} below the text map's, and loses no more than "
-        "{max_stability_loss:g} stability (ARI) and {max_coverage_loss:g} coverage (share of papers). Among "
-        "the hybrids that pass, choose the one with the highest QI on the held-out links.")
+        "gain over random no more than {tci_tolerance:g} below the text map's, loses no more than "
+        "{max_stability_loss:g} stability (ARI), and clusters at least {coverage_kept:.0%} as many papers as the "
+        "text map. Among the hybrids that pass, choose the one with the highest QI on the held-out links.")
 MIN_SUPPORT = 0.05  # a citation relation must give at least one tie to this share of the papers
 
 
@@ -249,7 +250,8 @@ def compare_prepared(df: pd.DataFrame, emb: np.ndarray, pairs: Sequence[Tuple[in
             "backbone": bool(pick is not None and pick["significant ties"]),
             "text_floor": bool(pick is None or pick["map"] == "text" or pd.notna(pick["text floor"])),
             "text_floor_value": floor_value,
-            "reasons": reasons, "rule": RULE.format(**m), "margins": m, "skipped": skipped,
+            "reasons": reasons, "rule": RULE.format(**m, coverage_kept=1 - m["max_coverage_loss"]),
+            "margins": m, "skipped": skipped,
             "support": sup, "holdout": holdout, "n_heldout": len(test), "n_links": len(pairs)}
 
 
@@ -271,8 +273,8 @@ def _decide(t: pd.DataFrame, m: Dict[str, float], have_test: bool) -> Tuple[str,
             why.append(f"TCI gain {r['TCI gain over random']:.3f} vs text {base['TCI gain over random']:.3f}")
         if not r["stability (ARI)"] >= base["stability (ARI)"] - m["max_stability_loss"]:
             why.append(f"stability {r['stability (ARI)']:.2f} vs text {base['stability (ARI)']:.2f}")
-        if not r["coverage"] >= base["coverage"] - m["max_coverage_loss"]:
-            why.append(f"coverage {r['coverage']:.0%} vs text {base['coverage']:.0%}")
+        if not r["coverage"] >= base["coverage"] * (1 - m["max_coverage_loss"]):
+            why.append(f"clusters {r['coverage'] / base['coverage'] - 1:+.0%} papers vs text")
         if why:
             reasons.append(f"{r['map']}: fails on " + "; ".join(why) + ".")
         else:
