@@ -8,7 +8,7 @@ graph, chooses the threshold by the Sensitivity Inclusion Index (SII) and finds
 the communities with Leiden, as in the published method.
 }
 \usage{
-s3_run(data, model = "mpnet", map = "text", threshold = NULL,
+s3_run(data, model = "mpnet", map = "auto", threshold = NULL,
        start_year = NULL, end_year = NULL, seed = 42L, level = 2L,
        method = c("leiden", "louvain"), strict_citations = FALSE,
        backbone = FALSE, dedupe = TRUE, cache_dir = NULL,
@@ -24,10 +24,13 @@ s3_run(data, model = "mpnet", map = "text", threshold = NULL,
   \item{model}{Embedding model: \code{"mpnet"} (default, the published
     method), another key from \code{\link{s3_models}}, or any
     sentence-transformers model name.}
-  \item{map}{Which relations build the map: \code{"text"} (the published
-    method), \code{"text+coupling"}, \code{"text+cocitation"},
-    \code{"text+direct"}, or \code{"auto"} to compare them first and use the
-    recommended one (see \code{\link{s3_compare_maps}}).}
+  \item{map}{Which relations build the map. \code{"auto"} (default) compares
+    the text map with text plus each citation relation at 5-40\% weight and
+    uses a hybrid only when it raises both silhouette and QI (see
+    \code{\link{s3_compare_maps}}). \code{"text"} is the published method
+    only; \code{"text+coupling"}, \code{"text+cocitation"},
+    \code{"text+direct"} or weights such as \code{"s3=0.8,coupling=0.2"} fix a
+    hybrid.}
   \item{threshold}{Fix the similarity threshold (e.g. \code{0.78}) instead of
     choosing it by SII.}
   \item{start_year, end_year}{Optional year range.}

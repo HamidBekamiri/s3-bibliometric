@@ -23,10 +23,11 @@ do not each favour one kind of map, and recommends one with a rule fixed in adva
 Each map is built as in run_s3: the threshold scan picks the threshold by SII, and hybrid
 maps scan thresholds that give the same numbers of links as the text scan.
 
-Rule (RULE below): keep the text map unless a hybrid recovers more held-out citations
-(by at least `min_heldout_gain`), keeps the TCI gain (at most `tci_tolerance` lower), and
-loses at most `max_stability_loss` stability and `max_coverage_loss` coverage. Among the
-hybrids that pass, the one with the highest held-out gain is recommended.
+Rule (RULE below): keep the text map unless a hybrid raises both the silhouette on the text
+embeddings and the QI on the held-out citation links, keeps the TCI gain (at most
+`tci_tolerance` lower), and loses at most `max_stability_loss` stability and
+`max_coverage_loss` coverage. Among the hybrids that pass, the one with the highest held-out
+QI is recommended. run_s3 uses this choice by default (S3Config(map_weights="auto")).
 """
 from __future__ import annotations
 
@@ -37,13 +38,12 @@ import pandas as pd
 
 ProgressCallback = Callable[[str, float], None]
 
-MARGINS = {"min_heldout_gain": 0.01, "tci_tolerance": 0.005,
-           "max_stability_loss": 0.05, "max_coverage_loss": 0.05}
-RULE = ("Keep the text map (the published S3 method) unless a hybrid map places a share of the "
-        "held-out citations inside communities (beyond random) at least {min_heldout_gain:g} higher than "
-        "the text map does, has a TCI gain over random no more than {tci_tolerance:g} below the text map's, "
-        "and loses no more than {max_stability_loss:g} stability (ARI) and {max_coverage_loss:g} coverage "
-        "(share of papers). Among the hybrids that pass, choose the one with the highest held-out gain.")
+MARGINS = {"tci_tolerance": 0.005, "max_stability_loss": 0.05, "max_coverage_loss": 0.05}
+RULE = ("Keep the text map (the published S3 method) unless a hybrid map raises both the silhouette on "
+        "the text embeddings and the QI on the held-out citation links above the text map's, keeps its TCI "
+        "gain over random no more than {tci_tolerance:g} below the text map's, and loses no more than "
+        "{max_stability_loss:g} stability (ARI) and {max_coverage_loss:g} coverage (share of papers). Among "
+        "the hybrids that pass, choose the one with the highest QI on the held-out links.")
 MIN_SUPPORT = 0.05  # a citation relation must give at least one tie to this share of the papers
 
 
@@ -166,7 +166,7 @@ def compare_prepared(df: pd.DataFrame, emb: np.ndarray, pairs: Sequence[Tuple[in
                      margins: Optional[Dict[str, float]] = None,
                      progress: Optional[ProgressCallback] = None) -> Dict[str, Any]:
     """Compare the candidate maps on prepared papers (after de-duplication) and their embeddings."""
-    from .evaluate import random_partition, tci, tfidf_matrix
+    from .evaluate import qi, random_partition, silhouette, tci, tfidf_matrix
     from .hybrid import density_thresholds, hybrid_matrix
     from .models import default_thresholds
     from .pipeline import _link_counts, apply_temporal_mask, s3_matrix, threshold_scan
@@ -225,6 +225,9 @@ def compare_prepared(df: pd.DataFrame, emb: np.ndarray, pairs: Sequence[Tuple[in
                      "held-out random (same sizes)": rec0, "TCI gain over random": t - t0,
                      "stability (ARI)": float(np.nanmean([st_seed, st_sample])),
                      "stability across seeds": st_seed, "stability on 90% samples": st_sample,
+                     "silhouette (embeddings)": silhouette(emb, lab, seed),
+                     "QI (held-out links)": qi(test, lab, cfg.top_n_communities) if test else float("nan"),
+                     "QI (all links)": qi(list(pairs), lab, cfg.top_n_communities) if pairs else float("nan"),
                      "coverage": float((lab >= 0).mean()), "papers clustered": int((lab >= 0).sum()),
                      "communities": int(len(set(lab[lab >= 0]))),
                      "papers with a tie": min([sup[r] for r in rel], default=float("nan")),
@@ -260,8 +263,10 @@ def _decide(t: pd.DataFrame, m: Dict[str, float], have_test: bool) -> Tuple[str,
     reasons, passed = [], []
     for _, r in t[t["map"] != "text"].iterrows():
         why = []
-        if not r["held-out citations gain"] >= base["held-out citations gain"] + m["min_heldout_gain"]:
-            why.append(f"held-out gain {r['held-out citations gain']:.3f} vs text {base['held-out citations gain']:.3f}")
+        if not r["silhouette (embeddings)"] > base["silhouette (embeddings)"]:
+            why.append(f"silhouette {r['silhouette (embeddings)']:.3f} vs text {base['silhouette (embeddings)']:.3f}")
+        if not r["QI (held-out links)"] > base["QI (held-out links)"]:
+            why.append(f"QI {r['QI (held-out links)']:.3f} vs text {base['QI (held-out links)']:.3f}")
         if not r["TCI gain over random"] >= base["TCI gain over random"] - m["tci_tolerance"]:
             why.append(f"TCI gain {r['TCI gain over random']:.3f} vs text {base['TCI gain over random']:.3f}")
         if not r["stability (ARI)"] >= base["stability (ARI)"] - m["max_stability_loss"]:
@@ -274,16 +279,18 @@ def _decide(t: pd.DataFrame, m: Dict[str, float], have_test: bool) -> Tuple[str,
             passed.append(r)
     if not passed:
         return ("text", ["No hybrid map passes the rule, so the text map (the published method) is kept."] + reasons)
-    best = max(passed, key=lambda r: r["held-out citations gain"])
+    best = max(passed, key=lambda r: r["QI (held-out links)"])
     others = [r["map"] for r in passed if r["map"] != best["map"]]
     note = ""
     if "held-out vs text, CI low" in best and pd.notna(best["held-out vs text, CI low"]):
         lo, hi = best["held-out vs text, CI low"], best["held-out vs text, CI high"]
-        note = (f" 95% interval of the difference in recovered hidden links: {lo:+.3f} to {hi:+.3f}"
-                + (", so the advantage could be sampling noise." if lo <= 0 else "."))
-    return (best["map"], [f"{best['map']} passes the rule with the highest held-out gain "
-                          f"({best['held-out citations gain']:.3f} vs text {base['held-out citations gain']:.3f})."
-                          + note + (f" Also passing: {', '.join(others)}." if others else "")] + reasons)
+        note = (f" Hidden links inside communities, difference from text: {lo:+.3f} to {hi:+.3f} (95% interval)"
+                + (", so that advantage could be sampling noise." if lo <= 0 else "."))
+    return (best["map"], [f"{best['map']} raises both silhouette ({best['silhouette (embeddings)']:.3f} vs text "
+                          f"{base['silhouette (embeddings)']:.3f}) and QI on held-out links "
+                          f"({best['QI (held-out links)']:.3f} vs {base['QI (held-out links)']:.3f}), with the highest QI "
+                          "of the maps that pass." + note
+                          + (f" Also passing: {', '.join(others)}." if others else "")] + reasons)
 
 
 def compare_maps(source, config=None, extended: bool = False, holdout: float = 0.2,

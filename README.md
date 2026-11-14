@@ -102,12 +102,15 @@ author. `citation_match="strict"` (CLI `--strict-citations`) keeps a short-title
 when the year (±1) and first author also appear in the reference. The default stays
 `"lenient"`, as in the S3 web app and the published paper.
 
-**Choose the map: four options.** The published S3 map uses text similarity alone. You can
-add one citation relation at 25%:
+**Choose the map.** By default (`"auto"`) S3 compares the text map with text plus each
+citation relation at 5–40% weight and uses a hybrid map only when it raises **both** the
+silhouette and the QI (see "Which map?" below); without in-corpus citations it uses the text
+map. Ask for a map explicitly to skip the comparison:
 
 | `map_weights` (CLI `--map`) | The map is built from |
 |---|---|
-| `"text"` (default) | text similarity (S3), the published method |
+| `"auto"` (default) | the best map of the comparison, or text if no hybrid raises both silhouette and QI |
+| `"text"` | text similarity (S3) only, the published method |
 | `"text+coupling"` | 75% text + 25% bibliographic coupling (shared references) |
 | `"text+cocitation"` | 75% text + 25% co-citation (cited together) |
 | `"text+direct"` | 75% text + 25% direct citation |
@@ -148,9 +151,10 @@ on measures that do not favour one kind of map:
 | Agreement with text | Adjusted Rand index with the text map: how different the result is (reported, not used) |
 
 A rule fixed in advance recommends a map: keep the text map (the published method) unless a
-hybrid recovers at least 1 point more held-out citations beyond random, keeps the TCI gain
-(at most 0.005 lower), and loses at most 0.05 stability and 5 points coverage. Among the
-hybrids that pass, the highest held-out gain wins. The table also gives a 95% bootstrap interval
+hybrid raises **both** the silhouette on the text embeddings (paper Table 6) and the QI on the
+held-out citation links (paper Table 7, counted on links the map did not see), keeps the TCI
+gain (at most 0.005 lower), and loses at most 0.05 stability and 5 points coverage. Among the
+hybrids that pass, the highest held-out QI wins. The table also gives a 95% bootstrap interval
 (over the hidden links) of each map's difference from the text map, so you can see whether a win
 is larger than sampling noise. Relations that give a tie to fewer than 5% of the papers are left
 out, with the reason. `extended=True` also tries the whole grid without the text floor, to

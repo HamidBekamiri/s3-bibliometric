@@ -106,7 +106,7 @@ def run_s3_analysis(
     community_method: str = "leiden",
     embedding_model: str = "mpnet",
     remove_duplicates: bool = True,
-    map_relations: str = "text",
+    map_relations: str = "auto",
     strict_citations: bool = False,
     significant_ties_only: bool = False,
 ) -> Dict[str, Any]:
@@ -121,10 +121,12 @@ def run_s3_analysis(
     any sentence-transformers model name (ask the user first; default mpnet). Records
     without title and abstract are dropped and duplicates (same DOI/EID/text, or S3 >= 0.98)
     are removed unless remove_duplicates=False. map_relations chooses the map, and every
-    answer and report follows it: "text" (default; S3 text similarity, the published method),
-    "text+coupling", "text+cocitation" or "text+direct" (75% text + 25% bibliographic
-    coupling, co-citation or direct citation), or "auto" (compare them first, as compare_maps
-    does, and use the recommended one). strict_citations=True
+    answer and report follows it: "auto" (default; compare the text map with text plus each
+    citation relation at 5-40% weight, as compare_maps does, and use a hybrid only when it raises
+    both silhouette and QI), "text" (S3 text similarity only, the published method: use it when
+    the user asks for the published method or text only), or a fixed hybrid the user asks for:
+    "text+coupling", "text+cocitation", "text+direct" (75%/25%) or weights such as
+    "s3=0.8,coupling=0.2". strict_citations=True
     stops short titles such as "Introduction" from matching unrelated references.
     significant_ties_only=True keeps only coupling, co-citation and co-authorship ties that are
     significant under a degree-preserving null model (in the map and Q35-Q37). Can take several minutes

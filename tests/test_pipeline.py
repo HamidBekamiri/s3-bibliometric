@@ -41,7 +41,7 @@ def res(df):
     z = np.load(DATA / "openalex_sample_mpnet.npz")
     lut = dict(zip(z["text"].tolist(), z["emb"]))
     mp.setattr(pipeline, "embed_texts", lambda texts, *a, **k: np.array([lut[t] for t in texts]))
-    r = s3bib.run_s3(df, **QUIET)
+    r = s3bib.run_s3(df, s3bib.S3Config(map_weights="text"), **QUIET)
     mp.undo()
     return r
 
@@ -109,7 +109,7 @@ def test_every_question_answers(res, tmp_path):
 
 
 def test_missing_columns_are_skipped(df):
-    r = s3bib.run_s3(df.drop(columns=["Funding Details"]), **QUIET)
+    r = s3bib.run_s3(df.drop(columns=["Funding Details"]), s3bib.S3Config(map_weights="text"), **QUIET)
     assert r.answer("Q20").findings[0].startswith("Not available")
 
 
@@ -130,7 +130,7 @@ def test_split_refs_handles_both_scopus_formats():
 
 
 def test_time_questions_skipped_for_single_year(df):
-    r = s3bib.run_s3(df.assign(Year=2023), **QUIET)
+    r = s3bib.run_s3(df.assign(Year=2023), s3bib.S3Config(map_weights="text"), **QUIET)
     for qid in ("Q13", "Q23"):
         assert "fewer than 3 publication years" in r.answer(qid).findings[0]
 
@@ -144,12 +144,12 @@ def test_concept_trends_leave_out_near_universal_keywords(res):
 
 
 def test_fixed_threshold_and_methods(df, res):
-    fixed = s3bib.run_s3(df, s3bib.S3Config(threshold=0.8), **QUIET)
+    fixed = s3bib.run_s3(df, s3bib.S3Config(threshold=0.8, map_weights="text"), **QUIET)
     assert fixed.best["threshold"] == 0.8 and fixed.best["fixed"]
     assert "fixed" in fixed.answer("Q1").findings[0]
     scan = {r["threshold"]: r for r in res.scan}
     assert fixed.best["n_papers"] == scan[0.8]["n_papers"]
-    lv = s3bib.run_s3(df, s3bib.S3Config(community_method="louvain"), **QUIET)
+    lv = s3bib.run_s3(df, s3bib.S3Config(community_method="louvain", map_weights="text"), **QUIET)
     assert lv.config.community_method == "louvain" and len(lv.communities()) >= 2
 
 
@@ -162,7 +162,7 @@ def test_citation_metrics_count_whole_corpus(res):
 
 
 def test_runs_are_reproducible(df, res):
-    b = s3bib.run_s3(df, **QUIET)
+    b = s3bib.run_s3(df, s3bib.S3Config(map_weights="text"), **QUIET)
     assert res.papers["community"].equals(b.papers["community"]) and res.scan == b.scan
     for qid, table in [("Q7", "Most central papers per community"), ("Q12", "Bridging papers")]:
         ta, tb = res.answer(qid).tables.get(table), b.answer(qid).tables.get(table)
@@ -173,13 +173,13 @@ def test_empty_and_duplicate_records_removed(df):
     # a record exported twice (same EID), the same paper under a second id, and an empty record
     extra = pd.concat([df.iloc[[5]], df.iloc[[7]].assign(EID="second-id", **{"Cited by": 0}),
                        df.iloc[[9]].assign(Title="", Abstract="", EID="empty")], ignore_index=True)
-    r = s3bib.run_s3(pd.concat([df, extra], ignore_index=True), **QUIET)
+    r = s3bib.run_s3(pd.concat([df, extra], ignore_index=True), s3bib.S3Config(map_weights="text"), **QUIET)
     reasons = r.removed["reason"].tolist()
     assert len(r.papers) == len(df)
     assert "no title and no abstract" in reasons
     assert sum(x.startswith("exact duplicate") for x in reasons) == 2
     assert "second-id" in r.removed["eid"].tolist()  # the less-cited copy goes
-    kept = s3bib.run_s3(pd.concat([df, extra], ignore_index=True), s3bib.S3Config(dedupe=False), **QUIET)
+    kept = s3bib.run_s3(pd.concat([df, extra], ignore_index=True), s3bib.S3Config(dedupe=False, map_weights="text"), **QUIET)
     assert len(kept.papers) == len(df) + 2  # the empty record is always dropped
 
 
@@ -229,7 +229,7 @@ def test_model_presets():
 
 def test_scopus_enrichment_with_mocked_api(df, tmp_path):
     """The mocked Scopus API answers with each paper's real OpenAlex reference list."""
-    r = s3bib.run_s3(df, **QUIET)
+    r = s3bib.run_s3(df, s3bib.S3Config(map_weights="text"), **QUIET)
     eids = r.papers["eid"].tolist()
     refs = df.set_index("EID")["Referenced IDs"].fillna("")
 
@@ -412,7 +412,7 @@ def test_prediction_questions(res, tmp_path):
 
 
 def test_prediction_switched_on_in_config(df):
-    r = s3bib.run_s3(df, s3bib.S3Config(prediction=True), **QUIET)
+    r = s3bib.run_s3(df, s3bib.S3Config(prediction=True, map_weights="text"), **QUIET)
     assert "Q30" in set(r.questions()["id"])
     assert not r.answer("Q24").findings[0].startswith("Prediction questions")
 
@@ -459,7 +459,7 @@ def test_four_map_options(df, tmp_path):
     with pytest.raises(ValueError):
         resolve_weights("unicorn")
     assert map_label(resolve_weights("text+cocitation")) == "75% text (S3) + 25% co-citation"
-    plain = s3bib.run_s3(df, **QUIET)
+    plain = s3bib.run_s3(df, s3bib.S3Config(map_weights="text"), **QUIET)
     for opt in ("text+coupling", "text+cocitation", "text+direct"):
         r = s3bib.run_s3(df, s3bib.S3Config(map_weights=opt), **QUIET)
         # each threshold links about as many pairs as the matching S3 threshold
@@ -633,18 +633,20 @@ def test_map_choice(res, df, tmp_path):
     assert (t["coverage"].between(0, 1)).all() and (t["stability (ARI)"] <= 1).all()
     assert t.loc["text", "agreement with text (ARI)"] == pytest.approx(1.0)
     base = t.loc["text"]
-    # the rule: with a very high bar the text map is kept; with no bar the best held-out gain wins
+    # the rule: a hybrid is chosen only if it raises both silhouette and held-out QI, and passes the guards
     from s3bib.mapchoice import _decide
-    strict = dict(ch["margins"], min_heldout_gain=1.0)
-    assert _decide(ch["table"], strict, True)[0] == "text"
-    loose = {"min_heldout_gain": -1, "tci_tolerance": 1, "max_stability_loss": 2, "max_coverage_loss": 1}
-    hybrids = t.drop(index="text")
-    if len(hybrids):
-        assert _decide(ch["table"], loose, True)[0] == hybrids["held-out citations gain"].idxmax()
+    loose = {"tci_tolerance": 1, "max_stability_loss": 2, "max_coverage_loss": 1}
+    up = hybrids = t.drop(index="text")
+    up = hybrids[(hybrids["silhouette (embeddings)"] > base["silhouette (embeddings)"])
+                 & (hybrids["QI (held-out links)"] > base["QI (held-out links)"])]
+    pick = _decide(ch["table"], loose, True)[0]
+    assert pick == (up["QI (held-out links)"].idxmax() if len(up) else "text")
     assert _decide(ch["table"], ch["margins"], False)[0] == "text"  # no citations: keep text
     if ch["recommended"] != "text":
         r = t.loc[ch["recommended"]]
-        assert r["held-out citations gain"] >= base["held-out citations gain"] + ch["margins"]["min_heldout_gain"]
+        assert r["silhouette (embeddings)"] > base["silhouette (embeddings)"]
+        assert r["QI (held-out links)"] > base["QI (held-out links)"]
+    assert s3bib.S3Config().map_weights == "auto"  # the choice is automatic unless a map is asked for
 
     a = res.answer("Q0")
     assert a.tables and a.chart and any("Recommended map" in f for f in a.findings)

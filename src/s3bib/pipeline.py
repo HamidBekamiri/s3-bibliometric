@@ -95,8 +95,10 @@ class S3Config:
     dedupe_threshold: float = 0.98     # S3 at or above this = the same paper (reprints, double indexing)
     # Map: "text" (None, S3 similarity only: the published method), "text+coupling",
     # "text+cocitation" or "text+direct" (75% text + 25% of that citation relation), a dict, or
-    # "auto": compare these maps first (s3bib.mapchoice) and run on the recommended one.
-    map_weights: Optional[Any] = None
+    # "auto" (the default): compare the text map with each citation relation at 5-40% weight
+    # first (s3bib.mapchoice) and run on the recommended one; without in-corpus citations the
+    # text map is used. Pass "text" for the published method only.
+    map_weights: Optional[Any] = "auto"
     # Citation matching from References text: "lenient" (as in the S3 web app) or "strict"
     # (short titles such as "Introduction" also need the year and first author to match).
     citation_match: str = "lenient"
@@ -891,12 +893,16 @@ def run_s3(source: Union[str, Path, pd.DataFrame],
     if cfg.map_weights == "auto":  # compare the maps first, then run on the recommended one
         from dataclasses import replace
         from .mapchoice import compare_prepared
-        pairs0 = citation_edges(df, strict=cfg.citation_match == "strict")
-        choice = compare_prepared(df, emb, pairs0, cfg,
-                                  progress=lambda s, p: say(f"Choosing the map: {s}", 0.5))
-        choice["auto"] = True
-        cfg = replace(cfg, map_weights=choice["weights"], backbone=cfg.backbone or choice["backbone"],
-                      text_floor=cfg.text_floor if choice.get("text_floor", True) else False)
+        pairs0 = citation_edges(df, strict=cfg.citation_match == "strict") \
+            if "references" in df and df["references"].notna().any() else []
+        if pairs0:
+            choice = compare_prepared(df, emb, pairs0, cfg,
+                                      progress=lambda s, p: say(f"Choosing the map: {s}", 0.5))
+            choice["auto"] = True
+            cfg = replace(cfg, map_weights=choice["weights"], backbone=cfg.backbone or choice["backbone"],
+                          text_floor=cfg.text_floor if choice.get("text_floor", True) else False)
+        else:  # no in-corpus citations: nothing to compare, so the published text map
+            cfg = replace(cfg, map_weights=None)
         set_seed(cfg.seed)
     return _run_prepared(df, emb, removed, cfg, say, choice)
 

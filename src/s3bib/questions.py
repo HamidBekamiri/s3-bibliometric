@@ -1428,10 +1428,11 @@ def q_map_choice(res) -> Answer:
     names = ("the text map and " + ", ".join(rels) + " added to it at 5% to 40% weight, in steps of 5"
              if rels else ", ".join(t["map"]))
     a.findings.append(f"Compared before the analysis: {names}. {ch['n_heldout']} of the in-corpus citation "
-                      f"links ({ch['holdout']:.0%}) were hidden while the maps were built, and each map is "
-                      "scored on how many of the hidden links fall inside one of its communities, beyond random "
-                      "communities of the same sizes. Text coherence (TCI gain over random), stability (ARI "
-                      "across seeds and 90% samples) and coverage are scored as well.")
+                      f"links ({ch['holdout']:.0%}) were hidden while the maps were built. Each map is scored on "
+                      "the silhouette of its communities on the text embeddings (as in the S3 paper's Table 6), "
+                      "the QI on the hidden links (Table 7, counted on links the map did not see), topic "
+                      "coherence (TCI gain over random, Table 5), stability (ARI across seeds and 90% samples) "
+                      "and coverage.")
     a.findings.append("Decision rule, fixed in advance: " + ch["rule"])
     if ch.get("text_floor_value") is not None:
         a.findings.append(f"Citations count only for pairs whose text similarity is at least "
@@ -1464,7 +1465,8 @@ def q_map_choice(res) -> Answer:
                           "from the Scopus API (enrich_citations) make the held-out test and the citation maps "
                           "more reliable.")
     show = t.drop(columns=[c for c in ("weights", "significant ties", "relation") if c in t])
-    cols = ["map", "citation weight", "held-out citations gain", "TCI gain over random", "stability (ARI)", "coverage",
+    cols = ["map", "citation weight", "silhouette (embeddings)", "QI (held-out links)", "TCI gain over random",
+            "stability (ARI)", "coverage", "QI (all links)", "held-out citations gain",
             "agreement with text (ARI)", "held-out vs text, CI low", "held-out vs text, CI high",
             "papers with a tie", "communities", "papers clustered", "held-out citations recovered",
             "held-out random (same sizes)", "stability across seeds", "stability on 90% samples",
@@ -1476,22 +1478,24 @@ def q_map_choice(res) -> Answer:
     curve = t[t["relation"] != "text"] if "relation" in t else t.iloc[0:0]
     if "text floor" in curve:
         curve = curve[curve["text floor"].notna()]
-    if len(curve):
-        base = float(t.loc[t["map"] == "text", "held-out citations gain"].iloc[0]) if (t["map"] == "text").any() else 0.0
+
+    def by_weight(col, title):
+        base = float(t.loc[t["map"] == "text", col].iloc[0]) if (t["map"] == "text").any() else 0.0
         xs = sorted(set(curve["citation weight"]))
         series = {"text alone": [base] * len(xs)}
         for r in sorted(set(curve["relation"])):
-            c = curve[curve["relation"] == r].set_index("citation weight")["held-out citations gain"]
+            c = curve[curve["relation"] == r].set_index("citation weight")[col]
             series[f"text + {r}"] = [float(c.get(x, float("nan"))) for x in xs]
-        a.chart = {"type": "line", "title": "Held-out citations inside communities (gain over random) by citation weight",
-                   "x_labels": [f"{x:.0%}" for x in xs], "series": series}
+        return {"type": "line", "title": title, "x_labels": [f"{x:.0%}" for x in xs], "series": series}
+
+    if len(curve) and "silhouette (embeddings)" in curve:
+        a.chart = by_weight("QI (held-out links)", "QI on held-out citation links, by citation weight (higher is better)")
+        a.charts.append(by_weight("silhouette (embeddings)",
+                                  "Silhouette on the text embeddings, by citation weight (higher is better)"))
+        a.charts.append(by_weight("TCI gain over random", "Topic coherence: TCI gain over random, by citation weight"))
     else:
         a.chart = {"type": "bar", "title": "Held-out citations inside communities, gain over random",
                    "labels": show["map"].tolist(), "values": show["held-out citations gain"].fillna(0).tolist()}
-    a.charts.append({"type": "bar", "title": "Topic coherence: TCI gain over random clusters of the same sizes",
-                     "labels": show["map"].tolist(), "values": show["TCI gain over random"].fillna(0).tolist()})
-    a.charts.append({"type": "bar", "title": "Stability: agreement across seeds and 90% samples (ARI)",
-                     "labels": show["map"].tolist(), "values": show["stability (ARI)"].fillna(0).tolist()})
     return a
 
 
