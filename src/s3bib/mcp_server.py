@@ -168,8 +168,9 @@ def compare_maps(csv_path: Optional[str] = None, embedding_model: str = "mpnet",
                  extended: bool = False, strict_citations: bool = False,
                  run_id: Optional[str] = None) -> Dict[str, Any]:
     """Before the full analysis: which map should S3 use for this corpus? Compares the text map
-    (the published method) with text+coupling, text+cocitation and text+direct (extended=True adds
-    10% and 50% citation weights and significant-ties variants). 20% of the in-corpus citation
+    (the published method) with text plus bibliographic coupling, co-citation or direct citation at
+    5%, 10%, ... 40% weight; citations count only for pairs already close in content (the text
+    floor). extended=True adds the same grid without the floor. 20% of the in-corpus citation
     links are hidden while the maps are built; each map is scored on the hidden links inside its
     communities (gain over random communities of the same sizes), on text coherence (TCI gain over
     random), stability (ARI across seeds and 90% samples) and coverage. A rule fixed in advance
@@ -193,10 +194,8 @@ def compare_maps(csv_path: Optional[str] = None, embedding_model: str = "mpnet",
         ch = _compare(p, cfg, extended=extended)
     t = ch["table"].drop(columns=["weights", "significant ties"], errors="ignore").round(4)
     w = ch["weights"]
-    if ch["recommended"] in ("text", "text+coupling", "text+cocitation", "text+direct"):
-        map_arg = ch["recommended"]
-    else:  # e.g. "text+coupling 50%": pass the weights
-        map_arg = ",".join(f"{k}={v:g}" for k, v in (w or {"s3": 1}).items())
+    # pass the exact weights, e.g. "s3=0.8,coupling=0.2", or "text"
+    map_arg = "text" if not w else ",".join(f"{k}={v:g}" for k, v in w.items())
     return {"table": json.loads(t.to_json(orient="records")), "recommended": ch["recommended"],
             "map_relations": map_arg, "significant_ties_only": ch["backbone"],
             "reasons": ch["reasons"], "rule": ch["rule"], "skipped": ch["skipped"],

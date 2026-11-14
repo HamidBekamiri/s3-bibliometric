@@ -629,7 +629,7 @@ def test_map_choice(res, df, tmp_path):
     ch = res.compare_maps()
     t = ch["table"].set_index("map")
     assert "text" in t.index and ch["recommended"] in t.index and ch["n_heldout"] == len(test)
-    assert len(t) + len(ch["skipped"]) == 4
+    assert len(t) + len(ch["skipped"]) == 1 + 3 * 8  # text + three relations at 5%, 10%, ... 40%
     assert (t["coverage"].between(0, 1)).all() and (t["stability (ARI)"] <= 1).all()
     assert t.loc["text", "agreement with text (ARI)"] == pytest.approx(1.0)
     base = t.loc["text"]
@@ -648,6 +648,19 @@ def test_map_choice(res, df, tmp_path):
 
     a = res.answer("Q0")
     assert a.tables and a.chart and any("Recommended map" in f for f in a.findings)
+
+    # the text floor: citations add nothing to pairs below it, and something above it
+    from s3bib.hybrid import hybrid_matrix, resolve_text_floor, coupling_matrix
+    floor = resolve_text_floor(None, res.config.thresholds)
+    assert floor == pytest.approx(min(res.config.thresholds) - 0.05) and resolve_text_floor(False, (0.8,)) is None
+    S = np.clip(res.embeddings @ res.embeddings.T, 0, None)
+    H = hybrid_matrix(res.embeddings, res.papers, res.citation_pairs, {"s3": 0.8, "coupling": 0.2}, None, floor)
+    C = coupling_matrix(res.papers)
+    extra = H - 0.8 * S
+    np.fill_diagonal(extra, 0)
+    off = ~np.eye(len(S), dtype=bool)
+    assert np.allclose(extra[(S < floor) & off], 0, atol=1e-5)
+    assert (extra[(S >= floor) & (C > 0) & off] > 0).all() and ((S >= floor) & (C > 0) & off).any()
 
     auto = s3bib.run_s3(df, s3bib.S3Config(map_weights="auto"), **QUIET)
     assert auto.map_choice["auto"] and auto.map_choice["recommended"] == ch["recommended"]

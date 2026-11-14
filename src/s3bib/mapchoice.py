@@ -47,18 +47,20 @@ RULE = ("Keep the text map (the published S3 method) unless a hybrid map places 
 MIN_SUPPORT = 0.05  # a citation relation must give at least one tie to this share of the papers
 
 
-def candidates(extended: bool = False) -> List[Tuple[str, Optional[Dict[str, float]], bool]]:
-    """(name, weights, significant ties only). Default: text and the three 75/25 hybrids.
-    extended: also 10% and 50% citation weight and the significant-ties variants."""
-    rel = (("coupling", "coupling"), ("cocitation", "cocitation"), ("direct", "direct"))
-    out: List[Tuple[str, Optional[Dict[str, float]], bool]] = [("text", None, False)]
-    shares = (0.1, 0.25, 0.5) if extended else (0.25,)
-    for key, short in rel:
-        for w in shares:
-            name = f"text+{short}" if w == 0.25 else f"text+{short} {w:.0%}"
-            out.append((name, {"s3": round(1 - w, 2), key: w}, False))
-        if extended and key != "direct":
-            out.append((f"text+{short} significant", {"s3": 0.75, key: 0.25}, True))
+GRID = (0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40)  # citation weight, step by step
+
+
+def candidates(extended: bool = False) -> List[Tuple[str, Optional[Dict[str, float]], bool, bool]]:
+    """(name, weights, significant ties only, text floor on). The text map, then each citation
+    relation at 5%, 10%, ... 40% weight, with the text floor (citations count only for pairs
+    already close in content). extended: also the same grid without the floor, to show its effect."""
+    rel = ("coupling", "cocitation", "direct")
+    out: List[Tuple[str, Optional[Dict[str, float]], bool, bool]] = [("text", None, False, True)]
+    for floor in ((True, False) if extended else (True,)):
+        for key in rel:
+            for w in GRID:
+                name = f"text+{key} {w:.0%}" + ("" if floor else " (no floor)")
+                out.append((name, {"s3": round(1 - w, 2), key: w}, False, floor))
     return out
 
 
@@ -182,9 +184,11 @@ def compare_prepared(df: pd.DataFrame, emb: np.ndarray, pairs: Sequence[Tuple[in
     counts = _link_counts(plain_dir, cfg.thresholds)
     default_scan = tuple(cfg.thresholds) == tuple(default_thresholds(cfg.model_name))
 
+    from .hybrid import resolve_text_floor
+    floor_value = resolve_text_floor(cfg.text_floor, cfg.thresholds)
     cands = candidates(extended)
     rows, skipped, parts, hit = [], [], {}, {}
-    for k, (name, w, sig) in enumerate(cands):
+    for k, (name, w, sig, floor) in enumerate(cands):
         say(f"Map {k + 1}/{len(cands)}: {name}", k / len(cands))
         rel = [c for c in (w or {}) if c != "s3"]
         low = [r for r in rel if sup[r] < MIN_SUPPORT]
@@ -196,7 +200,8 @@ def compare_prepared(df: pd.DataFrame, emb: np.ndarray, pairs: Sequence[Tuple[in
         if w is None:
             H, H_dir, ths = plain, plain_dir, cfg.thresholds
         else:
-            H = hybrid_matrix(emb, df, train, w, cfg.backbone_alpha if sig else None)
+            H = hybrid_matrix(emb, df, train, w, cfg.backbone_alpha if sig else None,
+                              floor_value if floor else None)
             H_dir = mask(H)
             ths = density_thresholds(H_dir, counts) if default_scan else cfg.thresholds
         _, best, part = threshold_scan(H_dir, H, ths, seed, method=method)
@@ -213,6 +218,9 @@ def compare_prepared(df: pd.DataFrame, emb: np.ndarray, pairs: Sequence[Tuple[in
         if test:
             hit[name] = hits(test, lab)
         rows.append({"map": name, "weights": w, "significant ties": sig,
+                     "relation": next((c for c in (w or {}) if c != "s3"), "text"),
+                     "citation weight": float(sum(v for c, v in (w or {}).items() if c != "s3")),
+                     "text floor": (floor_value if (floor and w) else None),
                      "held-out citations gain": rec - rec0, "held-out citations recovered": rec,
                      "held-out random (same sizes)": rec0, "TCI gain over random": t - t0,
                      "stability (ARI)": float(np.nanmean([st_seed, st_sample])),
@@ -236,6 +244,8 @@ def compare_prepared(df: pd.DataFrame, emb: np.ndarray, pairs: Sequence[Tuple[in
     return {"table": t, "recommended": rec_name, "extended": extended,
             "weights": None if pick is None else pick["weights"],
             "backbone": bool(pick is not None and pick["significant ties"]),
+            "text_floor": bool(pick is None or pick["map"] == "text" or pd.notna(pick["text floor"])),
+            "text_floor_value": floor_value,
             "reasons": reasons, "rule": RULE.format(**m), "margins": m, "skipped": skipped,
             "support": sup, "holdout": holdout, "n_heldout": len(test), "n_links": len(pairs)}
 

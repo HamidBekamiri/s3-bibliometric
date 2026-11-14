@@ -108,6 +108,9 @@ class S3Config:
     # significant under a degree-preserving null model (see s3bib.backbone): in the map and in Q35-Q37.
     backbone: bool = False
     backbone_alpha: float = 0.05       # false discovery rate for significant ties
+    # Hybrid maps: a citation relation counts only for pairs whose S3 is at least this value.
+    # None = 0.05 below the lowest S3 threshold of the scan (0.70 for mpnet); False = no floor.
+    text_floor: Optional[Any] = None
 
     def __post_init__(self):
         from .hybrid import resolve_weights
@@ -534,9 +537,11 @@ class S3Result:
             return self.s3(directed)
         from .hybrid import hybrid_matrix
         if getattr(self, "_hybrid", None) is None:
+            from .hybrid import resolve_text_floor
             self._hybrid = hybrid_matrix(self.embeddings, self.papers, self.citation_pairs,
                                          self.config.map_weights,
-                                         self.config.backbone_alpha if self.config.backbone else None)
+                                         self.config.backbone_alpha if self.config.backbone else None,
+                                         resolve_text_floor(self.config.text_floor, self.config.thresholds))
         h = self._hybrid
         if directed and self.config.temporal_mask:
             h = apply_temporal_mask(h, self.papers["year"].to_numpy(dtype=float))
@@ -781,7 +786,8 @@ class S3Result:
             choice = compare_prepared(base, self.embeddings, self.citation_pairs, cfg,
                                       extended=bool(self.map_choice.get("extended")))
             choice["auto"] = True
-            cfg = replace(cfg, map_weights=choice["weights"], backbone=choice["backbone"])
+            cfg = replace(cfg, map_weights=choice["weights"], backbone=choice["backbone"],
+                          text_floor=self.config.text_floor if choice.get("text_floor", True) else False)
         new = _run_prepared(base, self.embeddings, [], cfg, say, choice, pairs_given=self.citation_pairs)
         self.papers, self.scan, self.best, self.config = new.papers, new.scan, new.best, new.config
         if choice is not None:
@@ -889,7 +895,8 @@ def run_s3(source: Union[str, Path, pd.DataFrame],
         choice = compare_prepared(df, emb, pairs0, cfg,
                                   progress=lambda s, p: say(f"Choosing the map: {s}", 0.5))
         choice["auto"] = True
-        cfg = replace(cfg, map_weights=choice["weights"], backbone=cfg.backbone or choice["backbone"])
+        cfg = replace(cfg, map_weights=choice["weights"], backbone=cfg.backbone or choice["backbone"],
+                      text_floor=cfg.text_floor if choice.get("text_floor", True) else False)
         set_seed(cfg.seed)
     return _run_prepared(df, emb, removed, cfg, say, choice)
 
@@ -935,7 +942,9 @@ def _run_prepared(df: pd.DataFrame, emb: np.ndarray, removed: List[Dict[str, Any
         say("Matching in-corpus citations", 0.5)
         pairs = match()
         say("Building the hybrid map (S3 + citation relations)", 0.52)
-        s3 = hybrid_matrix(emb, df, pairs, cfg.map_weights, cfg.backbone_alpha if cfg.backbone else None)
+        from .hybrid import resolve_text_floor
+        s3 = hybrid_matrix(emb, df, pairs, cfg.map_weights, cfg.backbone_alpha if cfg.backbone else None,
+                           resolve_text_floor(cfg.text_floor, cfg.thresholds))
         s3_dir = apply_temporal_mask(s3, years) if cfg.temporal_mask else s3
         from .models import default_thresholds
         if tuple(cfg.thresholds) == tuple(default_thresholds(cfg.model_name)):

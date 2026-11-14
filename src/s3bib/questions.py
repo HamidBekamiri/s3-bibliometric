@@ -1424,19 +1424,29 @@ def q_map_choice(res) -> Answer:
     if not len(t):
         a.findings.append("No map could be built for the comparison.")
         return a
-    names = ", ".join(t["map"])
+    rels = sorted(set(t["relation"]) - {"text"}) if "relation" in t else []
+    names = ("the text map and " + ", ".join(rels) + " added to it at 5% to 40% weight, in steps of 5"
+             if rels else ", ".join(t["map"]))
     a.findings.append(f"Compared before the analysis: {names}. {ch['n_heldout']} of the in-corpus citation "
                       f"links ({ch['holdout']:.0%}) were hidden while the maps were built, and each map is "
                       "scored on how many of the hidden links fall inside one of its communities, beyond random "
                       "communities of the same sizes. Text coherence (TCI gain over random), stability (ARI "
                       "across seeds and 90% samples) and coverage are scored as well.")
     a.findings.append("Decision rule, fixed in advance: " + ch["rule"])
+    if ch.get("text_floor_value") is not None:
+        a.findings.append(f"Citations count only for pairs whose text similarity is at least "
+                          f"{ch['text_floor_value']:.2f}, so they re-rank papers that are already close in "
+                          "content and never link unrelated texts.")
     note = coupling_note(res)
     if note:
         a.findings.append(note)
     rec = ch["recommended"]
     a.findings.append(f"Recommended map: {rec}. " + " ".join(ch["reasons"][:1]))
-    a.findings.extend(ch["reasons"][1:])
+    fails = ch["reasons"][1:]
+    if len(fails) > 6:  # the full list is in the table; name how many failed, not each one
+        a.findings.append(f"{len(fails)} other maps fail the rule; the table gives every score.")
+    else:
+        a.findings.extend(fails)
     used = map_label(res.config.map_weights) + (" (significant ties only)" if res.config.map_weights and
                                                 res.config.backbone else "")
     want = map_label(ch["weights"]) + (" (significant ties only)" if ch["backbone"] else "")
@@ -1453,8 +1463,8 @@ def q_map_choice(res) -> Answer:
         a.findings.append("The citation links come from matching titles in the References text. Exact links "
                           "from the Scopus API (enrich_citations) make the held-out test and the citation maps "
                           "more reliable.")
-    show = t.drop(columns=[c for c in ("weights", "significant ties") if c in t])
-    cols = ["map", "held-out citations gain", "TCI gain over random", "stability (ARI)", "coverage",
+    show = t.drop(columns=[c for c in ("weights", "significant ties", "relation") if c in t])
+    cols = ["map", "citation weight", "held-out citations gain", "TCI gain over random", "stability (ARI)", "coverage",
             "agreement with text (ARI)", "held-out vs text, CI low", "held-out vs text, CI high",
             "papers with a tie", "communities", "papers clustered", "held-out citations recovered",
             "held-out random (same sizes)", "stability across seeds", "stability on 90% samples",
@@ -1463,8 +1473,21 @@ def q_map_choice(res) -> Answer:
     num = [c for c in show.columns if c not in ("map", "communities", "papers clustered")]
     show[num] = show[num].astype(float).round(3)
     a.tables["Candidate maps compared before the analysis"] = show
-    a.chart = {"type": "bar", "title": "Held-out citations inside communities, gain over random",
-               "labels": show["map"].tolist(), "values": show["held-out citations gain"].fillna(0).tolist()}
+    curve = t[t["relation"] != "text"] if "relation" in t else t.iloc[0:0]
+    if "text floor" in curve:
+        curve = curve[curve["text floor"].notna()]
+    if len(curve):
+        base = float(t.loc[t["map"] == "text", "held-out citations gain"].iloc[0]) if (t["map"] == "text").any() else 0.0
+        xs = sorted(set(curve["citation weight"]))
+        series = {"text alone": [base] * len(xs)}
+        for r in sorted(set(curve["relation"])):
+            c = curve[curve["relation"] == r].set_index("citation weight")["held-out citations gain"]
+            series[f"text + {r}"] = [float(c.get(x, float("nan"))) for x in xs]
+        a.chart = {"type": "line", "title": "Held-out citations inside communities (gain over random) by citation weight",
+                   "x_labels": [f"{x:.0%}" for x in xs], "series": series}
+    else:
+        a.chart = {"type": "bar", "title": "Held-out citations inside communities, gain over random",
+                   "labels": show["map"].tolist(), "values": show["held-out citations gain"].fillna(0).tolist()}
     a.charts.append({"type": "bar", "title": "Topic coherence: TCI gain over random clusters of the same sizes",
                      "labels": show["map"].tolist(), "values": show["TCI gain over random"].fillna(0).tolist()})
     a.charts.append({"type": "bar", "title": "Stability: agreement across seeds and 90% samples (ARI)",
@@ -1531,9 +1554,10 @@ QUESTIONS: List[Question] = [
     Question("Q0", 1, "Recommended", "Which map should the analysis use: text alone or text plus citations?",
              "Checks on your corpus, before the analysis, whether adding a citation relation gives better "
              "communities than the published text-only map.",
-             "Text, text+coupling, text+co-citation and text+direct maps compared on held-out citations "
-             "(20% hidden while the maps are built), TCI gain over random, stability (ARI across seeds and "
-             "90% samples) and coverage, with a decision rule fixed in advance", ("references",), q_map_choice),
+             "The text map and text plus coupling, co-citation or direct citation at 5-40% weight (citations "
+             "count only for pairs already close in content), compared on held-out citations (20% hidden while "
+             "the maps are built), TCI gain over random, stability (ARI across seeds and 90% samples) and "
+             "coverage, with a decision rule fixed in advance", ("references",), q_map_choice),
     Question("Q1", 1, "Essential", "What similarity threshold structures this field best?",
              "Shows the S3 threshold choice is data-driven, not arbitrary.",
              "Threshold scan 0.75-0.85, SII = silhouette × retained papers", (), q_threshold),

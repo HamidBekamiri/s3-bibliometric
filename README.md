@@ -125,9 +125,17 @@ tree, citation flows, bridges, interdisciplinarity and the report header (which 
 map). Coupling and co-citation are Salton cosines (0–1). Because the citation part is 0 for
 most pairs, the threshold scan matches link density: each threshold links as many pairs as
 one S3 threshold (0.75–0.85) on the same corpus, and SII picks the best, as for S3. Custom
-mixes also work, e.g. `map_weights={"s3": 0.5, "coupling": 0.5}`.
+mixes also work, e.g. `map_weights={"s3": 0.8, "coupling": 0.2}`.
 
-**Which map? Compare them before the analysis.** `compare_maps` builds each candidate map
+**Text floor.** A citation relation counts only for pairs whose text similarity is already at
+least 0.05 below the lowest S3 threshold (0.70 for mpnet). Citations then re-rank papers that
+are close in content and never link two unrelated texts, in line with S3's content-first design.
+Set it with `S3Config(text_floor=0.72)`, or `text_floor=False` to let citations count for
+every pair.
+
+**Which map? Compare them before the analysis.** `compare_maps` tries the text map and each
+citation relation (coupling, co-citation, direct citation) added step by step at 5%, 10%, ...
+40% weight, all with the text floor: 25 maps. It builds each candidate map
 (threshold scan and Leiden only, so it takes minutes, not a full run per map) and scores it
 on measures that do not favour one kind of map:
 
@@ -145,8 +153,9 @@ hybrid recovers at least 1 point more held-out citations beyond random, keeps th
 hybrids that pass, the highest held-out gain wins. The table also gives a 95% bootstrap interval
 (over the hidden links) of each map's difference from the text map, so you can see whether a win
 is larger than sampling noise. Relations that give a tie to fewer than 5% of the papers are left
-out, with the reason. `extended=True` also tries 10% and 50% citation
-weight and the significant-ties variants.
+out, with the reason. `extended=True` also tries the whole grid without the text floor, to
+show what the floor changes. The report's Q0 draws the held-out gain of each relation against
+its weight, next to the text map.
 
 ```python
 from s3bib.mapchoice import compare_maps

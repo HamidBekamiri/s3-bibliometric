@@ -18,9 +18,14 @@ S3Config(backbone=True) keeps only the significant coupling and co-citation ties
 (s3bib.backbone): sharing one very popular reference no longer links two papers.
 
 Because most pairs have no citation relation, hybrid values are on a different scale than
-S3 (a pair with S3 0.8 and no citation tie scores 0.2 at 25% weights). The threshold scan
+S3 (a pair with S3 0.8 and no citation tie scores 0.6 at 75% text weight). The threshold scan
 therefore matches link density: each hybrid threshold gives the same number of links as
 one S3 threshold (0.75-0.85) on the same corpus, and SII picks the best one, as for S3.
+
+Text floor (S3Config(text_floor=...)): a citation relation counts only for pairs whose S3 is at
+least the floor, by default 0.05 below the lowest S3 threshold (0.70 for mpnet), so citations
+re-rank pairs that are already close in content and never link unrelated texts.
+s3bib.mapchoice compares each relation at 5%, 10%, ... 40% weight.
 """
 from __future__ import annotations
 
@@ -168,24 +173,44 @@ def _significant(S: np.ndarray, B, alpha: float) -> np.ndarray:
     return M
 
 
+def resolve_text_floor(text_floor, thresholds: Sequence[float]) -> Optional[float]:
+    """The text similarity (S3) a pair needs before its citation relation counts.
+    None (default): 0.05 below the lowest threshold of the S3 scan (0.70 for mpnet), so
+    citations can only lift pairs that are already close in content; a number sets it;
+    False lets citations count for every pair."""
+    if text_floor is False:
+        return None
+    if text_floor is None or text_floor is True:
+        return round(min(float(t) for t in thresholds) - 0.05, 4)
+    return float(text_floor)
+
+
 def hybrid_matrix(emb: np.ndarray, df: pd.DataFrame, pairs: Sequence[Tuple[int, int]],
-                  weights: Dict[str, float], backbone_alpha: Optional[float] = None) -> np.ndarray:
+                  weights: Dict[str, float], backbone_alpha: Optional[float] = None,
+                  text_floor: Optional[float] = None) -> np.ndarray:
     """Weighted sum of the components. backbone_alpha: keep only the significant ties of
-    coupling and co-citation (false discovery rate alpha), as in S3Config(backbone=True)."""
+    coupling and co-citation (false discovery rate alpha), as in S3Config(backbone=True).
+    text_floor: citation relations count only for pairs whose S3 is at least this value,
+    so citations re-rank pairs that are close in content and never link unrelated texts."""
     n = len(df)
     H = np.zeros((n, n), dtype=np.float32)
+    S = np.clip(emb @ emb.T, 0, None).astype(np.float32)
     if weights.get("s3"):
-        H += weights["s3"] * np.clip(emb @ emb.T, 0, None).astype(np.float32)
+        H += weights["s3"] * S
+    gate = (S >= text_floor).astype(np.float32) if text_floor is not None else None
+    def add(w, M):
+        nonlocal H
+        H += w * (M * gate if gate is not None else M)
     if weights.get("coupling"):
         R = reference_matrix(df)
         C = _salton(R)
-        H += weights["coupling"] * (_significant(C, R, backbone_alpha) if backbone_alpha else C)
+        add(weights["coupling"], _significant(C, R, backbone_alpha) if backbone_alpha else C)
     if weights.get("direct"):
-        H += weights["direct"] * direct_matrix(n, pairs)
+        add(weights["direct"], direct_matrix(n, pairs))
     if weights.get("cocitation"):
         Ct = citation_matrix(n, pairs).T.tocsr()
         C = _salton(Ct)
-        H += weights["cocitation"] * (_significant(C, Ct, backbone_alpha) if backbone_alpha else C)
+        add(weights["cocitation"], _significant(C, Ct, backbone_alpha) if backbone_alpha else C)
     np.fill_diagonal(H, 1.0)
     return H
 

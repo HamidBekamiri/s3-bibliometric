@@ -4,7 +4,8 @@
 \title{Which map should the analysis use?}
 \description{
 Compares the text map (the published method) with text plus bibliographic
-coupling, co-citation or direct citation. 20\% of the in-corpus citation links
+coupling, co-citation or direct citation at 5\%, 10\%, ... 40\% weight; a
+citation counts only for pairs already close in content (the text floor). 20\% of the in-corpus citation links
 are hidden while the maps are built; each map is scored on the hidden links
 inside its communities, on topic coherence (TCI) and stability, each against
 random communities of the same sizes, and on coverage. A rule fixed in advance
@@ -20,8 +21,7 @@ s3_compare_maps(x, extended = FALSE, model = "mpnet", seed = 42L,
   \item{x}{An S3 result (uses its citation links, e.g. after
     \code{\link{s3_enrich_citations}}), or a path or data frame as in
     \code{\link{s3_run}}. For \code{print}, a map choice.}
-  \item{extended}{Also try 10\% and 50\% citation weight and the
-    significant-ties variants.}
+  \item{extended}{Also try the 5-40\% grid without the text floor.}
   \item{model, seed, strict_citations, cache_dir, quiet}{As in
     \code{\link{s3_run}}, when \code{x} is a file or data frame.}
   \item{...}{Ignored.}

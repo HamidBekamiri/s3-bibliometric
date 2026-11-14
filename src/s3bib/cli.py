@@ -94,7 +94,7 @@ def main(argv=None) -> None:
     cm.add_argument("--end-year", type=int)
     cm.add_argument("--seed", type=int, default=42)
     cm.add_argument("--extended", action="store_true",
-                    help="Also 10%% and 50%% citation weight and the significant-ties variants")
+                    help="Also the 5-40%% grid without the text floor, to show the floor's effect")
     cm.add_argument("--holdout", type=float, default=0.2, help="Share of citation links hidden (default 0.2)")
     cm.add_argument("--strict-citations", action="store_true")
     cm.add_argument("-o", "--output", help="Also write the comparison table to this CSV file")
