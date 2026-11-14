@@ -453,7 +453,7 @@ def test_four_map_options(df, tmp_path):
     assert resolve_weights("coc") == {"s3": 0.75, "cocitation": 0.25}
     assert resolve_weights("text+direct") == {"s3": 0.75, "direct": 0.25}
     assert resolve_weights("s3=1,coupling=1") == {"s3": 0.5, "coupling": 0.5}
-    assert resolve_weights("hybrid") == {"s3": 0.25, "coupling": 0.25, "direct": 0.25, "cocitation": 0.25}
+    assert resolve_weights("hybrid") == resolve_weights("auto") == "auto"  # "hybrid" screens the maps
     with pytest.raises(ValueError):
         resolve_weights({"unicorn": 1})
     with pytest.raises(ValueError):
@@ -646,7 +646,8 @@ def test_map_choice(res, df, tmp_path):
         r = t.loc[ch["recommended"]]
         assert r["silhouette (embeddings)"] > base["silhouette (embeddings)"]
         assert r["QI (held-out links)"] > base["QI (held-out links)"]
-    assert s3bib.S3Config().map_weights == "auto"  # the choice is automatic unless a map is asked for
+    assert s3bib.S3Config().map_weights is None  # text by default, the published method
+    assert s3bib.S3Config(map_weights="hybrid").map_weights == "auto"  # asking for a hybrid screens the maps
 
     a = res.answer("Q0")
     assert a.tables and a.chart and any("Recommended map" in f for f in a.findings)

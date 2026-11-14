@@ -1456,8 +1456,8 @@ def q_map_choice(res) -> Answer:
     elif used == want:
         a.findings.append(f"This analysis uses the recommended map ({used}).")
     else:
-        a.findings.append(f"This analysis uses {used}; the comparison recommends {want}. Run it again with "
-                          f"S3Config(map_weights=\"auto\") or --map auto to use the recommended map.")
+        a.findings.append(f"This analysis uses {used}; the screening recommends {want}. Ask for a hybrid map "
+                          f"(S3Config(map_weights=\"hybrid\"), --map hybrid, or map = \"hybrid\" in R) to use it.")
     for s in ch["skipped"]:
         a.findings.append(f"Not compared: {s['map']}, {s['reason']}.")
     if res.citation_source != "scopus_api":

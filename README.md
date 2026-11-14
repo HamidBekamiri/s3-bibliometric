@@ -69,7 +69,7 @@ column of your original export (no new export needed):
 - in-corpus citations become exact (direct citation, co-citation, QI and MI);
 - bibliographic coupling counts shared cited Scopus IDs instead of matching reference text,
   for every paper the API returns references for (the others keep their References text);
-- if the map uses citation relations, or was chosen with `map_weights="auto"`, the map and
+- if the map uses citation relations, or was chosen with `map_weights="hybrid"`, the map and
   communities are rebuilt on the exact data (saved labels are dropped, so label afterwards).
 
 This needs Scopus entitlement: your institution's network or VPN, or an institutional token
@@ -79,7 +79,8 @@ sets a weekly quota per key, shown on the developer portal. Results are cached i
 
 ```bash
 export SCOPUS_API_KEY="your-key"      # in your terminal, never in a chat
-s3bib report scopus.csv --scopus --map auto -o report.html
+s3bib report scopus.csv --scopus -o report.html              # text map (default)
+s3bib report scopus.csv --scopus --map hybrid -o report.html # or screen the hybrid maps
 ```
 
 ```python
@@ -91,7 +92,7 @@ s3bib.S3Config(dedupe=False)                # keep duplicates
 s3bib.S3Config(mi_denominator="all")        # MI over all in-corpus links
 s3bib.S3Config(citation_match="strict")     # short titles need year + first author too
 s3bib.S3Config(map_weights="text+coupling") # one of four maps (below)
-s3bib.S3Config(map_weights="auto")          # compare the maps first, use the recommended one
+s3bib.S3Config(map_weights="hybrid")        # screen the hybrid maps, use the best one
 ```
 
 **Strict citation matching.** Matching titles inside References text can link a short,
@@ -102,15 +103,15 @@ author. `citation_match="strict"` (CLI `--strict-citations`) keeps a short-title
 when the year (±1) and first author also appear in the reference. The default stays
 `"lenient"`, as in the S3 web app and the published paper.
 
-**Choose the map.** By default (`"auto"`) S3 compares the text map with text plus each
-citation relation at 5–40% weight and uses a hybrid map only when it raises **both** the
-silhouette and the QI (see "Which map?" below); without in-corpus citations it uses the text
-map. Ask for a map explicitly to skip the comparison:
+**Choose the map.** By default S3 uses the text map, the published method. Ask for a hybrid
+map (`"hybrid"`) and S3 first screens the text map against text plus each citation relation at
+5–40% weight, and uses the best hybrid only when it raises **both** the silhouette and the QI
+(see "Which map?" below); otherwise, or without in-corpus citations, it keeps the text map:
 
 | `map_weights` (CLI `--map`) | The map is built from |
 |---|---|
-| `"auto"` (default) | the best map of the comparison, or text if no hybrid raises both silhouette and QI |
-| `"text"` | text similarity (S3) only, the published method |
+| `"text"` (default) | text similarity (S3) only, the published method |
+| `"hybrid"` | the screening: the best hybrid map, or text if no hybrid raises both silhouette and QI |
 | `"text+coupling"` | 75% text + 25% bibliographic coupling (shared references) |
 | `"text+cocitation"` | 75% text + 25% co-citation (cited together) |
 | `"text+direct"` | 75% text + 25% direct citation |
@@ -166,14 +167,14 @@ its weight, next to the text map.
 from s3bib.mapchoice import compare_maps
 ch = compare_maps("scopus.csv", s3bib.S3Config(cache_dir="~/s3bib_cache"))
 ch["table"], ch["recommended"], ch["reasons"]
-res = s3bib.run_s3("scopus.csv", s3bib.S3Config(map_weights="auto"))   # compare, then run on the winner
+res = s3bib.run_s3("scopus.csv", s3bib.S3Config(map_weights="hybrid")) # screen, then run on the winner
 s3bib.enrich_citations(res)        # exact Scopus reference lists, then
 res.compare_maps(refresh=True)     # compare the maps again on them
 ```
 
 ```bash
 s3bib compare-maps scopus.csv            # the table and the recommendation
-s3bib report scopus.csv --map auto       # compare, then the full report on the recommended map
+s3bib report scopus.csv --map hybrid     # screen, then the full report on the recommended map
 ```
 
 The report shows the comparison as **Q0** at the top of the methods appendix, and the methods
@@ -468,16 +469,16 @@ Nothing to install: Colab runs Python in your browser, on Google's servers. Skip
    from google.colab import files
    csv = list(files.upload())[0]
    ```
-4. In a new cell, run S3 and download the report. `map_weights="auto"` first compares the
-   maps (text alone or text plus a citation relation) and uses the recommended one:
+4. In a new cell, run S3 and download the report (the text map, the published method):
    ```python
    import s3bib
-   res = s3bib.run_s3(csv, s3bib.S3Config(map_weights="auto"))
-   print(res.answer("Q0"))            # the map comparison and the map used
+   res = s3bib.run_s3(csv)
    res.report("s3_report.html")       # add level=1 for only the published S3 method
    files.download("s3_report.html")
    ```
-   The first run downloads the language model (about 420 MB). Then open the report and use it
+   For a hybrid map (text plus citations, screened), use
+   `s3bib.run_s3(csv, s3bib.S3Config(map_weights="hybrid"))` and `print(res.answer("Q0"))` to
+   see the screening. The first run downloads the language model (about 420 MB). Then open the report and use it
    as in step 2c, or keep asking in the notebook, e.g. `print(res.answer("Q8"))` or
    `res.questions()` for the list of questions.
 
@@ -567,7 +568,7 @@ same results. Details: [`r/README.md`](r/README.md).
 ```r
 remotes::install_github("AI-Growth-Lab/s3-bibliometric", subdir = "r")
 library(s3bibliometric)
-res <- s3_run("scopus.csv", map = "auto")
+res <- s3_run("scopus.csv")                  # text map; map = "hybrid" screens the hybrids
 s3_communities(res)
 s3_report(res, "s3_report.html")
 ```

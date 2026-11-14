@@ -32,6 +32,6 @@ s3_compare_maps(x, extended = FALSE, model = "mpnet", seed = 42L,
 \dontrun{
 ch <- s3_compare_maps(s3_example())
 ch$recommended
-res <- s3_run(s3_example(), map = "auto")
+res <- s3_run(s3_example(), map = "hybrid")
 }
 }

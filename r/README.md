@@ -42,7 +42,7 @@ group diversity: `res <- s3_run(s3_example())`.
 | Function | What it does |
 |---|---|
 | `s3_run()` | Run S3 on a Scopus export (file or data frame): model, map, threshold, years, level |
-| `s3_compare_maps()` | Before the analysis: text map vs text plus a citation relation, with a recommendation; or use `s3_run(map = "auto")` |
+| `s3_compare_maps()` | Before the analysis: text map vs text plus a citation relation, with a recommendation; or use `s3_run(map = "hybrid")` |
 | `s3_communities()`, `s3_papers()`, `s3_scan()` | Communities, papers and the threshold scan as data frames |
 | `s3_questions()`, `s3_answer()` | The ranked research questions, and findings plus tables for one question |
 | `s3_report()` | The HTML report (literature-review layout, or every question in order) |

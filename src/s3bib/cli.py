@@ -3,7 +3,7 @@
     s3bib report scopus.csv -o report.html
     s3bib report scopus.csv --model specter --scopus --threshold 0.78
     s3bib compare-maps scopus.csv          which map to use, before the full analysis
-    s3bib report scopus.csv --map auto     compare the maps, then run on the recommended one
+    s3bib report scopus.csv --map hybrid   screen the hybrid maps, then run on the best one
     s3bib models
     s3bib questions
 
@@ -59,12 +59,13 @@ def main(argv=None) -> None:
     sc.add_argument("--scopus", action="store_true", help="Exact citations from the Scopus API (SCOPUS_API_KEY)")
     sc.add_argument("--no-scopus", action="store_true", help="Don't ask about the Scopus API")
     r.add_argument("--seed", type=int, default=42)
-    r.add_argument("--map", default="auto",
-                   help="Which relations build the map. auto (default): compare the text map with text "
-                        "plus each citation relation at 5-40%% weight (as compare-maps does) and use a "
-                        "hybrid only when it raises both silhouette and QI. text: the published S3 method "
-                        "only. text+coupling, text+cocitation, text+direct (75%%/25%%) or weights such as "
-                        "s3=0.8,coupling=0.2 fix a hybrid. Every result in the report follows this choice.")
+    r.add_argument("--map", default="text",
+                   help="Which relations build the map. text (default): S3 text similarity, the published "
+                        "method. hybrid: screen the text map against text plus each citation relation at "
+                        "5-40%% weight (as compare-maps does) and use the best hybrid if it raises both "
+                        "silhouette and QI, else text. text+coupling, text+cocitation, text+direct "
+                        "(75%%/25%%) or weights such as s3=0.8,coupling=0.2 fix a hybrid. Every result in "
+                        "the report follows this choice.")
     r.add_argument("--strict-citations", action="store_true",
                    help="Short titles (e.g. 'Introduction') only count as cited when year and first author match")
     r.add_argument("--backbone", action="store_true",

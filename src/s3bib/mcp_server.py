@@ -46,9 +46,10 @@ mcp = _Server(
         "is mpnet, the model of the published S3 paper), and (2) whether they want exact "
         "citations from the Scopus API (needs SCOPUS_API_KEY set in this MCP server's "
         "environment; never ask the user to paste a key into the chat). "
-        "Typical flow: compare_maps on the Scopus CSV if it has References (offer it: it says whether "
-        "text alone or text plus a citation relation gives the better map) -> run_s3_analysis with the "
-        "map the user picks -> enrich_citations (with a Scopus key: exact, complete reference lists; "
+        "Typical flow: run_s3_analysis (the text map, the published method, by default; "
+        "map_relations=\"hybrid\" when the user asks for a hybrid map, which screens text plus each "
+        "citation relation at 5-40% weight and keeps a hybrid only if it raises both silhouette and QI; "
+        "compare_maps shows that screening on its own) -> enrich_citations (with a Scopus key: exact, complete reference lists; "
         "then compare_maps with run_id to check the map choice on the exact data) if the user wants "
         "exact citations -> get_community for each main "
         "community and save_community_labels with short labels -> list_questions shows "
@@ -106,7 +107,7 @@ def run_s3_analysis(
     community_method: str = "leiden",
     embedding_model: str = "mpnet",
     remove_duplicates: bool = True,
-    map_relations: str = "auto",
+    map_relations: str = "text",
     strict_citations: bool = False,
     significant_ties_only: bool = False,
 ) -> Dict[str, Any]:
@@ -121,12 +122,11 @@ def run_s3_analysis(
     any sentence-transformers model name (ask the user first; default mpnet). Records
     without title and abstract are dropped and duplicates (same DOI/EID/text, or S3 >= 0.98)
     are removed unless remove_duplicates=False. map_relations chooses the map, and every
-    answer and report follows it: "auto" (default; compare the text map with text plus each
-    citation relation at 5-40% weight, as compare_maps does, and use a hybrid only when it raises
-    both silhouette and QI), "text" (S3 text similarity only, the published method: use it when
-    the user asks for the published method or text only), or a fixed hybrid the user asks for:
-    "text+coupling", "text+cocitation", "text+direct" (75%/25%) or weights such as
-    "s3=0.8,coupling=0.2". strict_citations=True
+    answer and report follows it: "text" (default; S3 text similarity, the published method),
+    "hybrid" when the user asks for a hybrid map (screens text plus each citation relation at
+    5-40% weight, as compare_maps does, and uses the best hybrid if it raises both silhouette and
+    QI, else text), or a specific hybrid the user names: "text+coupling", "text+cocitation",
+    "text+direct" (75%/25%) or weights such as "s3=0.8,coupling=0.2". strict_citations=True
     stops short titles such as "Introduction" from matching unrelated references.
     significant_ties_only=True keeps only coupling, co-citation and co-authorship ties that are
     significant under a degree-preserving null model (in the map and Q35-Q37). Can take several minutes
@@ -217,7 +217,7 @@ def enrich_citations(run_id: str) -> Dict[str, Any]:
     """Exact, complete reference lists from the Scopus Abstract Retrieval API, for every paper of
     the run (by EID). The in-corpus citation links become exact, and bibliographic coupling uses
     the cited Scopus IDs instead of the exported References text (which can be truncated or
-    missing). If the run's map uses citation relations (or was chosen with map_relations="auto"),
+    missing). If the run's map uses citation relations (or was chosen with map_relations="hybrid"),
     the map and communities are rebuilt and saved labels are dropped: label the communities after
     this step. Reads SCOPUS_API_KEY (and optional SCOPUS_INST_TOKEN) from this server's environment;
     needs Scopus entitlement (institution network or token). About 0.2 s per paper; cached."""

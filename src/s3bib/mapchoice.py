@@ -27,7 +27,7 @@ Rule (RULE below): keep the text map unless a hybrid raises both the silhouette 
 embeddings and the QI on the held-out citation links, keeps the TCI gain (at most
 `tci_tolerance` lower), loses at most `max_stability_loss` stability, and clusters at most
 `max_coverage_loss` (10%) fewer papers than the text map. Among the hybrids that pass, the one with the highest held-out
-QI is recommended. run_s3 uses this choice by default (S3Config(map_weights="auto")).
+QI is recommended. run_s3 uses it when a hybrid map is asked for (S3Config(map_weights="hybrid")).
 """
 from __future__ import annotations
 

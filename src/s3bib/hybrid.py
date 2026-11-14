@@ -13,7 +13,8 @@ Choose one of four maps with S3Config(map_weights=...):
   "text+coupling"    75% text + 25% bibliographic coupling
   "text+cocitation"  75% text + 25% co-citation
   "text+direct"      75% text + 25% direct citation
-A dict sets custom weights (normalised to sum to 1); "hybrid" gives all four 25%.
+A dict sets custom weights (normalised to sum to 1). "hybrid" (or "auto") screens the hybrid
+maps first (s3bib.mapchoice) and uses the best one, or the text map if none passes.
 S3Config(backbone=True) keeps only the significant coupling and co-citation ties
 (s3bib.backbone): sharing one very popular reference no longer links two papers.
 
@@ -64,16 +65,19 @@ def map_label(w: Optional[Dict[str, float]]) -> str:
 def resolve_weights(w: Union[None, str, bool, Dict[str, float]]) -> Optional[Dict[str, float]]:
     """The map: None or "text" -> text only (S3, the published method);
     "text+coupling", "text+cocitation", "text+direct" -> 75% text + 25% of that relation;
-    a dict (or "s3=0.5,coupling=0.5") -> custom weights, normalised; "hybrid" -> 25% each."""
+    a dict (or "s3=0.5,coupling=0.5") -> custom weights, normalised; "hybrid" or "auto" ->
+    "auto": screen the hybrid maps first (s3bib.mapchoice) and use the best one."""
     if w is None or w is False:
         return None
+    if isinstance(w, str) and w.strip().lower() in ("hybrid", "auto"):
+        return "auto"
     if isinstance(w, str):
         key = _ALIASES.get(w.strip().lower(), w.strip().lower())
         if key in MAP_OPTIONS:
             w = MAP_OPTIONS[key]
             if w is None:
                 return None
-    if w is True or (isinstance(w, str) and w.lower() == "hybrid"):
+    if w is True:
         return dict(EQUAL)
     if isinstance(w, str):  # "s3=0.5,coupling=0.5"
         if "=" not in w:

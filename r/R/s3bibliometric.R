@@ -40,7 +40,7 @@ progress_printer <- function(quiet) {
   }
 }
 
-config <- function(model = "mpnet", map = "auto", threshold = NULL, start_year = NULL,
+config <- function(model = "mpnet", map = "text", threshold = NULL, start_year = NULL,
                    end_year = NULL, seed = 42L, level = 2L, method = "leiden",
                    strict_citations = FALSE, backbone = FALSE, dedupe = TRUE,
                    cache_dir = NULL, prediction = FALSE) {
@@ -97,7 +97,7 @@ s3_example <- function() {
 # ---------------------------------------------------------------------------
 # run, save, load
 # ---------------------------------------------------------------------------
-s3_run <- function(data, model = "mpnet", map = "auto", threshold = NULL,
+s3_run <- function(data, model = "mpnet", map = "text", threshold = NULL,
                    start_year = NULL, end_year = NULL, seed = 42L, level = 2L,
                    method = c("leiden", "louvain"), strict_citations = FALSE,
                    backbone = FALSE, dedupe = TRUE, cache_dir = NULL,

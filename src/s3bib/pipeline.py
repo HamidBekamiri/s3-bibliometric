@@ -95,10 +95,10 @@ class S3Config:
     dedupe_threshold: float = 0.98     # S3 at or above this = the same paper (reprints, double indexing)
     # Map: "text" (None, S3 similarity only: the published method), "text+coupling",
     # "text+cocitation" or "text+direct" (75% text + 25% of that citation relation), a dict, or
-    # "auto" (the default): compare the text map with each citation relation at 5-40% weight
-    # first (s3bib.mapchoice) and run on the recommended one; without in-corpus citations the
-    # text map is used. Pass "text" for the published method only.
-    map_weights: Optional[Any] = "auto"
+    # "hybrid" (also "auto"): screen the text map against each citation relation at 5-40% weight
+    # first (s3bib.mapchoice) and use the best hybrid if it raises both silhouette and QI, else
+    # the text map. Default: the text map, the published method.
+    map_weights: Optional[Any] = None
     # Citation matching from References text: "lenient" (as in the S3 web app) or "strict"
     # (short titles such as "Introduction" also need the year and first author to match).
     citation_match: str = "lenient"
@@ -117,10 +117,7 @@ class S3Config:
     def __post_init__(self):
         from .hybrid import resolve_weights
         from .models import default_thresholds, resolve_model
-        if not (isinstance(self.map_weights, str) and self.map_weights.strip().lower() == "auto"):
-            self.map_weights = resolve_weights(self.map_weights)
-        else:
-            self.map_weights = "auto"
+        self.map_weights = resolve_weights(self.map_weights)
         if self.level not in (1, 2, 3):
             raise ValueError("level must be 1, 2 or 3")
         if self.citation_match not in ("lenient", "strict"):
@@ -881,7 +878,7 @@ def run_s3(source: Union[str, Path, pd.DataFrame],
            config: Optional[S3Config] = None,
            progress: Optional[ProgressCallback] = None) -> S3Result:
     """Run the full S3 pipeline on a Scopus export and return an S3Result.
-    S3Config(map_weights="auto") first compares the candidate maps (s3bib.mapchoice) and
+    S3Config(map_weights="hybrid") first screens the candidate maps (s3bib.mapchoice) and
     runs on the recommended one; the comparison is kept in S3Result.map_choice."""
     cfg = config or S3Config()
     say = progress or (lambda s, p: log.info("%s (%.0f%%)", s, p * 100))
